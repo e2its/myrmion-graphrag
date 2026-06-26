@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "graphrag-local": {
+      "command": "/RUTA/ABSOLUTA/graphrag-local/venv/bin/python",
+      "args": ["/RUTA/ABSOLUTA/graphrag-local/mcp_server.py"],
+      "env": {
+        "LIGHTRAG_BASE_URL": "http://localhost:9621",
+        "LIGHTRAG_MODE": "mix",
+        "LIGHTRAG_TIMEOUT": "120"
+      }
+    }
+  }
+}

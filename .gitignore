@@ -1,0 +1,23 @@
+# Entorno Python
+venv/
+__pycache__/
+*.pyc
+.Python
+
+# Configuracion local con secretos / rutas de maquina
+.env
+
+# Almacenamiento generado por LightRAG (grafo, vectores, estado)
+rag_storage/
+
+# Documentos del usuario (no los subas al repo)
+documentos/*
+!documentos/.gitkeep
+
+# .mcp.json generado con rutas absolutas de la maquina.
+# Descomenta si NO quieres versionarlo (recomendado en repos compartidos):
+# .mcp.json
+
+# Sistema
+.DS_Store
+*.log
