@@ -4,8 +4,14 @@ __pycache__/
 *.pyc
 .Python
 
-# Configuracion local con secretos / rutas de maquina
+# === CONFIGURACION PERSONAL (NUNCA al repo) ==========================
+# Toda tu config real (rutas absolutas, API key, modelos) vive en config/.
+# En la raiz solo quedan enlaces simbolicos que los tools exigen ahi.
+# Se versionan SOLO las plantillas: lightrag.env.example y .mcp.json.example
+config/
 .env
+.mcp.json
+# =====================================================================
 
 # Almacenamiento generado por LightRAG (grafo, vectores, estado)
 rag_storage/
@@ -13,10 +19,6 @@ rag_storage/
 # Documentos del usuario (no los subas al repo)
 documentos/*
 !documentos/.gitkeep
-
-# .mcp.json generado con rutas absolutas de la maquina.
-# Descomenta si NO quieres versionarlo (recomendado en repos compartidos):
-# .mcp.json
 
 # Sistema
 .DS_Store

@@ -93,22 +93,28 @@ nada, solo expone las capacidades de LightRAG a Claude Code de forma estándar.
 ollama pull qwen2.5:7b
 ollama pull nomic-embed-text
 
-# 2. Servidor LightRAG (en otra terminal, déjalo corriendo)
-uv tool install "lightrag-hku[api]"   # o: pip install "lightrag-hku[api]"
-cp lightrag.env.example .env
-lightrag-server                        # Web UI: http://localhost:9621/webui
-
-# 3. Indexar tus documentos (mételos antes en ./documentos)
-python ingest.py ./documentos
-
-# 4. Servidor MCP + config de Claude Code
+# 2. Servidor MCP + config personal (crea config/, venv y los enlaces)
 ./setup.sh
+# edita config/lightrag.env (rutas + LIGHTRAG_API_KEY) y re-ejecuta ./setup.sh
+
+# 3. Servidor LightRAG (en otra terminal, déjalo corriendo)
+uv tool install "lightrag-hku[api]"   # o: pip install "lightrag-hku[api]"
+lightrag-server                        # lee .env -> config/lightrag.env
+
+# 4. Indexar tus documentos (con API key si la activaste)
+python ingest.py "$INPUT_DIR" --api-key "$LIGHTRAG_API_KEY"
 ```
 
-`setup.sh` crea el entorno virtual, instala dependencias y reescribe `.mcp.json`
-con las rutas absolutas de tu máquina. Abre el repo en VS Code con Claude Code y
-comprueba con `/mcp` que `graphrag-local` aparece conectado con sus 3
-herramientas.
+Toda tu configuración personal (rutas absolutas, API key, modelos) vive en
+**`config/`**, que está **gitignoreada**: nada personal llega nunca al repo. En
+la raíz solo quedan los enlaces `.env -> config/lightrag.env` y
+`.mcp.json -> config/mcp.json` que LightRAG y Claude Code esperan ahí (también
+ignorados). El repo solo versiona las plantillas `*.example`.
+
+`setup.sh` crea el venv, instala dependencias, genera `config/mcp.json` con las
+rutas absolutas de tu máquina y la API key (leída de `config/lightrag.env`), y
+crea los enlaces. Abre el repo en VS Code con Claude Code y comprueba con `/mcp`
+que `graphrag-local` aparece conectado con sus 3 herramientas.
 
 ---
 
@@ -168,11 +174,14 @@ indexado esté tu material. Reindexa cuando añadas documentos importantes.
 
 Tres formas, la que prefieras:
 
-1. **Carpeta vigilada:** deja ficheros en `./documentos` (el `INPUT_DIR` del
-   `.env`) y dispara un escaneo desde la Web UI o con `POST /documents/scan`.
+1. **Carpeta vigilada:** apunta `INPUT_DIR` (en `config/lightrag.env`) a tu
+   carpeta y dispara un escaneo desde la Web UI o con `POST /documents/scan`.
 2. **Web UI:** arrastra ficheros en `http://localhost:9621/webui` (además
    visualizas el grafo).
-3. **Script en lote:** `python ingest.py ./mis_documentos`
+3. **Script en lote:** `python ingest.py "$INPUT_DIR" --api-key "$LIGHTRAG_API_KEY"`
+   Informa por consola: contador `[i/N]`, %, ETA y estado por fichero, más un
+   resumen. Añade `--watch` para seguir **en vivo** el indexado
+   (`pendientes / procesando / indexados / fallidos`) hasta que termine.
 
 Formatos soportados: `.md`, `.txt`, `.pdf`, `.docx`, `.doc`, `.pptx`, `.csv`,
 `.rst`, `.html`. La indexación corre en segundo plano; la primera vez tarda
@@ -308,14 +317,21 @@ tu sistema (en Windows, la ruta completa al `python.exe` del venv).
 .
 ├── mcp_server.py          # servidor MCP (puente a la API REST de LightRAG)
 ├── ingest.py              # ingesta en lote de una carpeta
-├── lightrag.env.example   # config del servidor LightRAG (afinada 24 GB / CPU)
-├── .mcp.json              # config de Claude Code (la rellena setup.sh)
-├── setup.sh               # crea venv, instala deps y resuelve rutas absolutas
+├── lightrag.env.example   # PLANTILLA config del servidor LightRAG (24 GB / CPU)
+├── .mcp.json.example      # PLANTILLA config MCP de Claude Code
+├── setup.sh               # crea venv, config/ y los enlaces .env / .mcp.json
 ├── requirements.txt
 ├── CLAUDE.md              # contexto del proyecto para Claude Code
-├── documentos/            # deja aquí tus documentos a indexar
+├── documentos/            # (opcional) deja aquí documentos a indexar
 ├── LICENSE
 └── README.md
+
+# Generado en local, NUNCA versionado (gitignored):
+#   config/lightrag.env    # TU config real del servidor (rutas, API key)
+#   config/mcp.json        # TU config real del MCP (rutas absolutas, API key)
+#   .env        -> config/lightrag.env   (enlace que espera LightRAG)
+#   .mcp.json   -> config/mcp.json       (enlace que espera Claude Code)
+#   venv/  rag_storage/
 ```
 
 ---

@@ -36,20 +36,24 @@ Modos de búsqueda: `mix` (recomendado, grafo + vectores), `hybrid`, `local`
 ollama pull qwen2.5:7b
 ollama pull nomic-embed-text
 
-# 2. Servidor LightRAG (déjalo corriendo en otra terminal)
+# 2. Entorno del servidor MCP + config personal
+./setup.sh    # crea venv, config/ y los enlaces .env / .mcp.json
+# edita config/lightrag.env (rutas + LIGHTRAG_API_KEY) y re-ejecuta ./setup.sh
+
+# 3. Servidor LightRAG (déjalo corriendo en otra terminal)
 uv tool install "lightrag-hku[api]"   # o: pip install "lightrag-hku[api]"
-cp lightrag.env.example .env
-lightrag-server
+lightrag-server                        # lee .env -> config/lightrag.env
 
-# 3. Indexar documentos (carpeta ./documentos o con el script)
-python ingest.py ./documentos
-
-# 4. Entorno del servidor MCP
-./setup.sh    # crea venv, instala deps y rellena las rutas de .mcp.json
+# 4. Indexar documentos (informa de progreso; --watch sigue el indexado)
+python ingest.py "$INPUT_DIR" --api-key "$LIGHTRAG_API_KEY" --watch
 ```
 
-El `.mcp.json` de la raíz hace que Claude Code descubra el servidor al abrir
-este proyecto. Verifica con `/mcp` que `graphrag-local` aparece conectado.
+Toda la config personal (rutas, API key, modelos) vive en `config/`, que está
+**gitignoreada**; en la raíz solo hay enlaces `.env -> config/lightrag.env` y
+`.mcp.json -> config/mcp.json` (también ignorados). El repo solo versiona las
+plantillas `*.example`. El `.mcp.json` de la raíz hace que Claude Code descubra
+el servidor al abrir el proyecto. Verifica con `/mcp` que `graphrag-local`
+aparece conectado.
 
 ## Notas
 
