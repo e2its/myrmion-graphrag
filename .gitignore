@@ -20,6 +20,9 @@ rag_storage/
 documentos/*
 !documentos/.gitkeep
 
+# Scripts locales de arranque (cada maquina el suyo, no se versionan)
+ollama-serve.sh
+
 # Sistema
 .DS_Store
 *.log
