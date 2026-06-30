@@ -28,6 +28,16 @@ import httpx
 
 EXTS = {".md", ".txt", ".pdf", ".docx", ".doc", ".pptx", ".csv", ".rst", ".html"}
 
+# Directorios de dependencias / build / control de versiones: su contenido NO
+# son documentos del usuario, contamina el grafo y dispara el tiempo de indexado.
+# Si una carpeta con cualquiera de estos nombres aparece en la ruta, se omite.
+EXCLUDE_DIRS = {
+    "node_modules", ".git", ".svn", ".hg", "__pycache__", ".venv", "venv",
+    "site-packages", "dist", "build", ".next", ".nuxt", "target", "vendor",
+    "bower_components", ".idea", ".vscode", ".cache", ".gradle", ".tox",
+    ".pytest_cache", ".mypy_cache", ".angular", ".terraform",
+}
+
 
 def fmt_size(n):
     for unidad in ("B", "KB", "MB", "GB"):
@@ -122,6 +132,8 @@ def main():
     ap.add_argument("--api-key", default=os.environ.get("LIGHTRAG_API_KEY", ""))
     ap.add_argument("--watch", action="store_true",
                     help="monitoriza el indexado en vivo hasta que termine")
+    ap.add_argument("--no-exclude", action="store_true",
+                    help="no omitir node_modules/.git/build/etc. (sube TODO)")
     args = ap.parse_args()
 
     base = args.url.rstrip("/")
@@ -131,13 +143,24 @@ def main():
     if not raiz.is_dir():
         sys.exit(f"No existe la carpeta: {raiz}")
 
-    ficheros = sorted(p for p in raiz.rglob("*")
-                      if p.is_file() and p.suffix.lower() in EXTS)
+    candidatos = [p for p in raiz.rglob("*")
+                  if p.is_file() and p.suffix.lower() in EXTS]
+    if args.no_exclude:
+        ficheros, omitidos = sorted(candidatos), 0
+    else:
+        ficheros = sorted(
+            p for p in candidatos
+            if not any(parte in EXCLUDE_DIRS for parte in p.relative_to(raiz).parts)
+        )
+        omitidos = len(candidatos) - len(ficheros)
     total = len(ficheros)
     if not total:
         sys.exit("No encontre documentos con extensiones soportadas.")
 
     tam_total = sum(p.stat().st_size for p in ficheros)
+    if omitidos:
+        print(f"Omitidos {omitidos} ficheros en node_modules/.git/build/etc. "
+              f"(usa --no-exclude para incluirlos).")
     print(f"Subiendo {total} ficheros ({fmt_size(tam_total)}) a {base}")
     if not headers:
         print("AVISO: sin API key. Si el servidor exige LIGHTRAG_API_KEY, las "
