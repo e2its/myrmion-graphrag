@@ -1,8 +1,8 @@
 """Parser multi-lenguaje con tree-sitter (gramáticas individuales, sin descargas).
 
-Lenguajes: JavaScript, TypeScript/TSX, Java, C#. Usa la API estándar de py-tree-sitter con
-los paquetes `tree-sitter-<lang>`. Si la gramática no está instalada, degrada con elegancia
-(devuelve solo el nodo Module) para no romper el indexado.
+Lenguajes: JavaScript, TypeScript/TSX, Java, C# (paquetes `tree-sitter-<lang>`) y VB.NET
+(grammar 'vb' de `tree-sitter-language-pack`). Usa la API estándar de py-tree-sitter. Si la
+gramática no está disponible, degrada con elegancia (devuelve solo el nodo Module).
 
 Extrae Class/Function/Method + DEFINES/IMPORTS/INHERITS/CALLS. Las llamadas salen sin
 resolver (dst=""); `resolver.py` las afina.
@@ -53,6 +53,16 @@ LANG_CONFIG = {
         "import": {"using_directive"},
         "heritage": {"base_list"},
     },
+    # VB.NET: la gramática viene de tree-sitter-language-pack ('vb'), no de un paquete propio.
+    "vbnet": {
+        "pack": "vb",
+        "class": {"class_block", "module_block", "structure_block", "interface_block", "enum_block"},
+        "method": {"method_declaration"},
+        "func": set(),
+        "call": {"invocation"}, "call_field": None,
+        "import": {"imports_statement"},
+        "heritage": set(),  # 'Inherits'/'Implements' poco fiables en esta gramática; se omiten
+    },
 }
 
 _PARSERS: dict = {}
@@ -62,12 +72,18 @@ def _get_ts_parser(lang: str):
     if lang in _PARSERS:
         return _PARSERS[lang]
     cfg = LANG_CONFIG[lang]
-    import importlib
-
     from tree_sitter import Language, Parser
 
-    mod = importlib.import_module(cfg["module"])
-    language = Language(getattr(mod, cfg["func_name"])())
+    if cfg.get("pack"):
+        # VB.NET u otros: gramática servida por tree-sitter-language-pack (ya es un Language).
+        import tree_sitter_language_pack as tlp
+
+        language = tlp.get_language(cfg["pack"])
+    else:
+        import importlib
+
+        mod = importlib.import_module(cfg["module"])
+        language = Language(getattr(mod, cfg["func_name"])())
     parser = Parser(language)
     _PARSERS[lang] = parser
     return parser
@@ -117,7 +133,16 @@ class TreeSitterParser:
         return ""
 
     def _callee_of(self, call_node, raw):
-        target = call_node.child_by_field_name(self.cfg["call_field"])
+        field = self.cfg.get("call_field")
+        target = call_node.child_by_field_name(field) if field else None
+        if target is None:
+            # sin campo (p.ej. VB 'invocation'): el callee es el primer hijo que no es
+            # la lista de argumentos ni un paréntesis.
+            for c in call_node.children:
+                if c.type in ("argument_list", "arguments", "(", ")"):
+                    continue
+                target = c
+                break
         if target is None:
             return None, ""
         if target.type.endswith("identifier"):
@@ -126,11 +151,12 @@ class TreeSitterParser:
         obj = target.child_by_field_name("object") or target.child_by_field_name("expression")
         if prop is not None:
             return self._text(prop, raw), (self._text(obj, raw) if obj is not None else "")
-        ident = None
-        for c in target.children:
-            if c.type.endswith("identifier"):
-                ident = c
-        return (self._text(ident, raw) if ident is not None else None), ""
+        # member_access (VB) u otros: el nombre es el último identifier hijo directo.
+        idents = [c for c in target.children if c.type.endswith("identifier")]
+        if idents:
+            receiver = self._text(idents[0], raw) if len(idents) > 1 else ""
+            return self._text(idents[-1], raw), receiver
+        return None, ""
 
     def _heritage(self, class_node, raw, cls_node, edges):
         for c in class_node.children:

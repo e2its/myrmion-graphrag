@@ -52,7 +52,7 @@ def _ensure_registry():
     reg([".java"], lambda: TreeSitterParser("java"))
     reg([".cs"], lambda: TreeSitterParser("csharp"))
     reg([".bas", ".cls", ".frm", ".vbs"], lambda: VBParser("vb6"))
-    reg([".vb"], lambda: VBParser("vbnet"))
+    reg([".vb"], lambda: TreeSitterParser("vbnet"))   # VB.NET via tree-sitter (grammar 'vb')
     reg([".asp"], lambda: AspParser())
 
 

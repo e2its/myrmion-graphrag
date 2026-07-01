@@ -314,8 +314,8 @@ CALLS/IMPLEMENTS`); solo cambia el motor de parseo:
 | **TypeScript / TSX** | `.ts .tsx` | tree-sitter | `tree-sitter-typescript` |
 | **Java** | `.java` | tree-sitter | `tree-sitter-java` |
 | **C#** | `.cs` | tree-sitter | `tree-sitter-c-sharp` |
-| **VB5/6 · VBScript** | `.bas .cls .frm .vbs` | propio (line-oriented) | `Sub`/`Function`/`Property Get\|Let\|Set`/`Class`, `Implements`, `Call` |
-| **VB.NET** | `.vb` | propio (dialecto `vbnet`) | `Namespace`/`Imports`/`Inherits`/`Structure`/`Interface`/`Enum`. La gramática `tree-sitter-vb-dotnet` es enchufable a futuro (sin wheel en PyPI hoy) |
+| **VB.NET** | `.vb` | **tree-sitter** | grammar `vb` de `tree-sitter-language-pack`: `Class`/`Module`/`Structure`/`Interface`/`Enum`, `Sub`/`Function`, `Imports`, llamadas |
+| **VB5/6 · VBScript** | `.bas .cls .frm .vbs` | propio (line-oriented) | `Sub`/`Function`/`Property Get\|Let\|Set`/`Class`, `Implements`, `Call` (sin gramática tree-sitter fiable) |
 | **ASP clásico** | `.asp` | preprocesador → VBScript | extrae bloques `<% %>` y directivas `<!--#include-->` (→ `IMPORTS`) |
 
 > La resolución de llamadas de VB6/VBScript/VB.NET es heurística (no compila VB); expone

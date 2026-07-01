@@ -75,10 +75,32 @@ def test_treesitter_java():
 def test_registry_by_extension():
     assert isinstance(get_parser_for_path("a.py"), PythonAstParser)
     assert isinstance(get_parser_for_path("a.js"), TreeSitterParser)
+    assert isinstance(get_parser_for_path("a.vb"), TreeSitterParser)  # VB.NET via tree-sitter
     from codebase_mcp.parser.vb_parser import VBParser
-    assert isinstance(get_parser_for_path("a.bas"), VBParser)
-    assert isinstance(get_parser_for_path("a.vb"), VBParser)
+    assert isinstance(get_parser_for_path("a.bas"), VBParser)         # VB6 con parser propio
     assert get_parser_for_path("a.unknown") is None
+
+
+def test_treesitter_vbnet():
+    import pytest
+
+    from codebase_mcp.parser.treesitter_parser import _get_ts_parser
+    try:
+        _get_ts_parser("vbnet")
+    except Exception:
+        pytest.skip("gramática VB.NET (tree-sitter-language-pack 'vb') no disponible")
+    src = ("Public Class Ledger\n"
+           "    Public Sub Post()\n"
+           "        Validate()\n"
+           "    End Sub\n"
+           "    Private Function Validate() As Boolean\n"
+           "    End Function\n"
+           "End Class\n")
+    res = TreeSitterParser("vbnet").parse_source(src, "Modern.vb")
+    k = {(n.kind, n.name) for n in res.nodes}
+    assert ("Class", "Ledger") in k
+    assert ("Method", "Post") in k
+    assert any(e.kind == "CALLS" and e.callee_name == "Validate" for e in res.edges)
 
 
 def test_module_name_from_path():
