@@ -1,29 +1,39 @@
 name: release-please
 
-# Automatiza las releases a partir de commits convencionales (feat:/fix:/...).
-# En cada push a main, release-please abre/actualiza un "release PR" con el CHANGELOG
-# y la version calculada. Al mergear ese PR, crea el tag vX.Y.Z y la GitHub Release.
+# Automatiza las releases desde commits convencionales (feat:/fix:/...).
+# En cada push a main: actualiza/crea el "release PR" (release-pr) y, si un release PR se
+# ha mergeado, publica el tag vX.Y.Z + la GitHub Release (github-release).
+#
+# Se ejecuta la CLI oficial con `npx` (Node viene preinstalado en ubuntu-latest) y SIN usar
+# actions de marketplace (`uses:`), para no depender de la allowlist de Actions de la cuenta.
 
 on:
   push:
     branches:
       - main
 
-# Sin permisos por defecto: el token es de solo lectura salvo donde se conceda
-# explicitamente (principio de minimo privilegio).
+# Minimo privilegio: sin permisos por defecto; solo el job recibe lo justo.
 permissions: {}
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    # Unicos permisos que necesita release-please: escribir contenido (tags/commits/
-    # releases) y abrir el pull request de release.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: write        # crear commits/tags/releases
+      pull-requests: write    # abrir/actualizar el release PR
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - uses: googleapis/release-please-action@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+      - name: release-please (CLI oficial, sin actions de terceros)
+        run: |
+          set -e
+          npx --yes release-please@16 release-pr \
+            --token="$GITHUB_TOKEN" \
+            --repo-url="${{ github.repository }}" \
+            --config-file=release-please-config.json \
+            --manifest-file=.release-please-manifest.json
+          npx --yes release-please@16 github-release \
+            --token="$GITHUB_TOKEN" \
+            --repo-url="${{ github.repository }}" \
+            --config-file=release-please-config.json \
+            --manifest-file=.release-please-manifest.json
