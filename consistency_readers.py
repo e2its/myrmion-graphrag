@@ -52,6 +52,8 @@ class _LightRAGDocSource:  # pragma: no cover
         return {x for x in out if x}
 
     def reindex(self, doc_id):
+        # LightRAG no expone reindex por-doc: /documents/scan re-escanea el INPUT_DIR y
+        # reprocesa lo pendiente (incluido este doc). Es un full-scan, no puntual.
         self.client._post("/documents/scan", {})
 
     def delete(self, doc_id):

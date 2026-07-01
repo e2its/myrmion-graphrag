@@ -72,6 +72,7 @@ Verifica con `/mcp` que aparecen **`myrmion-graphrag`** y **`myrmion-codebase`**
 
 - Backends de storage seleccionables por perfil (filesystem/neo4j/postgres/híbrido); ver
   README. `estado_rag` reporta el backend activo. Cambiar de backend exige re-indexar.
-- El inventario de código NO usa SQLite: `memory` (JSON), `neo4j` o `postgres`.
+- El inventario de código usa el mismo trío que LightRAG: `filesystem` (JSON local, por
+  defecto), `neo4j` o `postgres`.
 - Tests: `pip install -r requirements-dev.txt && python -m pytest` (cobertura mínima 80%).
 - No edites `rag_storage/` a mano; lo gestiona LightRAG.

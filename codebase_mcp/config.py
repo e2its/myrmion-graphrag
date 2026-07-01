@@ -14,11 +14,15 @@ def codebase_root() -> str:
 
 
 def storage_kind() -> str:
-    return _get("CODEBASE_STORAGE", "neo4j").lower()
+    # filesystem (por defecto, como el de LightRAG) | neo4j | postgres
+    return _get("CODEBASE_STORAGE", "filesystem").lower()
 
 
-def memory_snapshot_path() -> str:
-    return _get("CODEBASE_MEMORY_SNAPSHOT", "config/codebase.json")
+def snapshot_path() -> str:
+    # Backend 'filesystem': el grafo de código se persiste en un JSON local (equivalente al
+    # NetworkX pickled del filesystem de LightRAG). CODEBASE_MEMORY_SNAPSHOT es alias legacy.
+    return (_get("CODEBASE_SNAPSHOT", "") or _get("CODEBASE_MEMORY_SNAPSHOT", "")
+            or "config/codebase.json")
 
 
 def entrypoints() -> list:
@@ -52,9 +56,10 @@ def make_store():
     if kind == "postgres":  # pragma: no cover - requiere driver/servicio
         from .graph.postgres_store import PostgresGraphStore
         return PostgresGraphStore(dsn=_get("CODEBASE_POSTGRES_DSN", ""))
+    # filesystem (por defecto): grafo en memoria persistido a un JSON local.
     from .graph.memory_store import InMemoryGraphStore
     store = InMemoryGraphStore()
-    snap = memory_snapshot_path()
+    snap = snapshot_path()
     if snap:
         store.load_json(snap)
     return store

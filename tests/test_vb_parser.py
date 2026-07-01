@@ -70,6 +70,25 @@ def test_vb_continuation_and_comment():
     assert ("CALLS", "Foo") in _edge_kinds(res)
 
 
+def test_vb_proc_span_and_body_hash():
+    src = ("Sub A()\n"
+           "    x = 1\n"
+           "    y = 2\n"
+           "End Sub\n")
+    res = VBParser("vb6").parse_source(src, "M.bas")
+    proc = next(n for n in res.nodes if n.name == "A")
+    assert proc.end_lineno > proc.lineno   # se fija al cerrar (End Sub)
+    assert proc.body_hash != ""            # hay hash de cuerpo (detección de 'modified')
+
+
+def test_vb_call_member_no_spurious_receiver():
+    # 'Call obj.Metodo()' no debe capturar 'obj' como llamada suelta
+    res = VBParser("vb6").parse_source("Sub A()\n    Call obj.Metodo()\nEnd Sub\n", "M.bas")
+    calls = {(e.callee_name, e.receiver) for e in res.edges if e.kind == "CALLS"}
+    assert ("Metodo", "obj") in calls
+    assert ("obj", "") not in calls
+
+
 def test_asp_extracts_vbscript_and_includes():
     src = ('<!--#include file="Legacy.bas"-->\n'
            "<html><%\n"

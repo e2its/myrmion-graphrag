@@ -184,6 +184,8 @@ class LightRAGClient:
             )
         except httpx.ConnectError:
             return f"No pude conectar con LightRAG en {self.base_url}."
+        except httpx.TimeoutException:
+            return "La sincronizacion del documento supero el timeout; reintentalo."
         if r.status_code not in (200, 201, 202):
             return f"LightRAG devolvio HTTP {r.status_code}: {r.text[:500]}"
         accion = "reemplazado" if doc_id else "insertado"

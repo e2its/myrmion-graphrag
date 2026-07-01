@@ -56,8 +56,12 @@ class PostgresGraphStore(GraphStore):  # pragma: no cover
         )
 
     def upsert_edge(self, edge: Edge) -> None:
+        # ON CONFLICT DO UPDATE: si la misma arista se re-inserta tras resolverse, actualiza
+        # confidence/external en vez de descartar el update.
         self._q(
-            "INSERT INTO cb_edges VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+            "INSERT INTO cb_edges VALUES (%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT (src,kind,dst,callee_name,receiver) "
+            "DO UPDATE SET confidence=EXCLUDED.confidence, external=EXCLUDED.external",
             (edge.src, edge.kind, edge.dst, edge.callee_name, edge.receiver, edge.confidence, edge.external),
         )
 
@@ -65,7 +69,8 @@ class PostgresGraphStore(GraphStore):  # pragma: no cover
         ids = [r[0] for r in self._q("SELECT id FROM cb_nodes WHERE file=%s", (file,))]
         self._q("DELETE FROM cb_nodes WHERE file=%s", (file,))
         for nid in ids:
-            self._q("DELETE FROM cb_edges WHERE src=%s", (nid,))
+            # borra aristas donde el nodo es origen O destino (no deja aristas colgando)
+            self._q("DELETE FROM cb_edges WHERE src=%s OR dst=%s", (nid, nid))
 
     def clear(self) -> None:
         self._q("DELETE FROM cb_nodes")

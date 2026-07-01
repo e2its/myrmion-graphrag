@@ -8,7 +8,7 @@ sincronización incremental. El razonamiento en lenguaje natural lo hace el clie
 este servidor solo aporta hechos estructurados. Espejo fino de `mcp_server.py`.
 
 Config por variables de entorno (ver codebase.env.example): CODEBASE_ROOT, CODEBASE_STORAGE
-(neo4j|postgres|memory), CODEBASE_MEMORY_SNAPSHOT, CODEBASE_ENTRYPOINTS, ...
+(filesystem|neo4j|postgres), CODEBASE_SNAPSHOT, CODEBASE_ENTRYPOINTS, ...
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def _json(obj) -> str:
 def _save(store) -> None:
     if hasattr(store, "save_json"):
         try:
-            store.save_json(config.memory_snapshot_path())
+            store.save_json(config.snapshot_path())
         except OSError:
             pass
 
@@ -64,12 +64,14 @@ def indexar_codebase(ruta: str = "", incremental: bool = False) -> str:
 
 
 @mcp.tool()
-def sincronizar_codigo(rutas: list, durable: bool = False) -> str:
-    """Sincroniza el grafo tras editar ficheros, SIN duplicados y de forma consistente.
+def sincronizar_codigo(rutas: list) -> str:
+    """Sincroniza el grafo del código tras editar ficheros, SIN duplicados ni residuos.
+
+    Reindexa solo los ficheros dados (borra sus símbolos previos, re-parsea y re-resuelve las
+    llamadas cruzadas) y persiste en el store configurado (CODEBASE_STORAGE). Idempotente.
 
     Args:
         rutas: Rutas (relativas a CODEBASE_ROOT) de los ficheros editados.
-        durable: Si True, escribe al inventario canónico; por defecto al overlay de sesión.
     """
     root = config.codebase_root()
     store = config.make_store()
@@ -79,13 +81,17 @@ def sincronizar_codigo(rutas: list, durable: bool = False) -> str:
     except Exception as e:  # noqa: BLE001
         return f"Error sincronizando: {type(e).__name__}: {e}"
     _save(store)
-    res["destino"] = "durable" if durable else "overlay"
     return _json(res)
 
 
 @mcp.tool()
 def dependencias_de(simbolo: str, profundidad: int = 1) -> str:
-    """Devuelve de qué depende un símbolo (a qué llama), hasta `profundidad` niveles."""
+    """Devuelve de qué depende un símbolo (a qué llama), hasta `profundidad` niveles.
+
+    Args:
+        simbolo: Nombre simple o qualified_name (p.ej. "run" o "svc.Service.run").
+        profundidad: Niveles de llamadas a seguir (1 = directas).
+    """
     store = config.make_store()
     nid, err = _resolve(store, simbolo)
     if err:
@@ -95,7 +101,12 @@ def dependencias_de(simbolo: str, profundidad: int = 1) -> str:
 
 @mcp.tool()
 def quien_llama_a(simbolo: str, profundidad: int = 1) -> str:
-    """Devuelve quién llama a un símbolo (callers), hasta `profundidad` niveles."""
+    """Devuelve quién llama a un símbolo (callers), hasta `profundidad` niveles.
+
+    Args:
+        simbolo: Nombre simple o qualified_name del símbolo objetivo.
+        profundidad: Niveles de callers a seguir (1 = directos).
+    """
     store = config.make_store()
     nid, err = _resolve(store, simbolo)
     if err:
@@ -105,7 +116,12 @@ def quien_llama_a(simbolo: str, profundidad: int = 1) -> str:
 
 @mcp.tool()
 def a_que_afecta(simbolo: str, profundidad: int = 5) -> str:
-    """Blast radius: qué símbolos se ven afectados si cambias `simbolo` (dependientes)."""
+    """Blast radius: qué símbolos se ven afectados si cambias `simbolo` (dependientes).
+
+    Args:
+        simbolo: Nombre simple o qualified_name del símbolo que vas a cambiar.
+        profundidad: Alcance de la propagación de impacto (1-5).
+    """
     store = config.make_store()
     nid, err = _resolve(store, simbolo)
     if err:
@@ -115,7 +131,12 @@ def a_que_afecta(simbolo: str, profundidad: int = 5) -> str:
 
 @mcp.tool()
 def inventario(filtro: str = "") -> str:
-    """Inventario de símbolos con etiquetas reusable/mandatory/dead. `filtro`: reusable|mandatory|dead|texto."""
+    """Inventario de símbolos con etiquetas reusable/mandatory/dead.
+
+    Args:
+        filtro: `reusable`|`mandatory`|`dead` para filtrar por etiqueta, o un texto para
+            filtrar por qualified_name. Vacío = todos.
+    """
     store = config.make_store()
     items = inventory.build(store, entrypoints=config.entrypoints(),
                             reusable_min_modules=config.reusable_min_modules())
@@ -143,21 +164,36 @@ def arquitectura() -> str:
 
 @mcp.tool()
 def cambios_desde(git_ref: str) -> str:
-    """Ficheros cambiados desde `git_ref` y el blast radius de los símbolos tocados."""
+    """Ficheros cambiados desde `git_ref` y el blast radius de los símbolos tocados.
+
+    Args:
+        git_ref: Referencia git (commit/tag/rama) contra la que comparar el working tree.
+    """
     root = config.codebase_root()
     store = config.make_store()
     ficheros = gitutil.changed_files(git_ref, cwd=root)
+    fset = set(ficheros)
+    # una sola pasada sobre los nodos, agrupando por fichero (evita O(ficheros x nodos))
+    por_fichero = {}
+    for n in store.find_nodes():
+        if n.file in fset and n.kind in ("Function", "Method", "Class"):
+            por_fichero.setdefault(n.file, []).append(n)
     afectados = {}
     for f in ficheros:
-        for n in store.find_nodes():
-            if n.file == f and n.kind in ("Function", "Method", "Class"):
-                afectados[n.qualified_name] = queries.blast_radius(store, n.id, depth=3)
+        for n in por_fichero.get(f, []):
+            afectados[n.qualified_name] = queries.blast_radius(store, n.id, depth=3)
     return _json({"ficheros": ficheros, "afectados": afectados})
 
 
 @mcp.tool()
 def anotar_simbolo(simbolo: str, etiqueta: str, nota: str = "") -> str:
-    """Fija una anotación persistente (mandatory|reusable|deprecated|keep|<texto>) en un símbolo."""
+    """Fija una anotación persistente en un símbolo (sobrevive reindexados).
+
+    Args:
+        simbolo: Nombre simple o qualified_name del símbolo a anotar.
+        etiqueta: `mandatory`|`reusable`|`deprecated`|`keep` o una etiqueta libre.
+        nota: Texto opcional asociado a la anotación.
+    """
     store = config.make_store()
     nid, err = _resolve(store, simbolo)
     if err:
@@ -169,7 +205,11 @@ def anotar_simbolo(simbolo: str, etiqueta: str, nota: str = "") -> str:
 
 @mcp.tool()
 def historico(simbolo: str) -> str:
-    """Evolución de un símbolo (added/modified/removed por commit)."""
+    """Evolución de un símbolo (added/modified/removed por commit).
+
+    Args:
+        simbolo: Nombre simple o qualified_name del símbolo.
+    """
     store = config.make_store()
     nid, err = _resolve(store, simbolo)
     if err:

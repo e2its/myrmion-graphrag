@@ -111,6 +111,13 @@ def test_sincronizar_documento_delete_then_insert():
 
 
 @respx.mock
+def test_sincronizar_documento_timeout():
+    respx.get(f"{BASE}/documents").mock(return_value=httpx.Response(200, json={"statuses": {}}))
+    respx.post(f"{BASE}/documents/text").mock(side_effect=httpx.TimeoutException("x"))
+    assert "timeout" in client().upsert_document("n.md", "x")
+
+
+@respx.mock
 def test_sincronizar_documento_insert_when_absent():
     respx.get(f"{BASE}/documents").mock(return_value=httpx.Response(200, json={"statuses": {}}))
     respx.post(f"{BASE}/documents/text").mock(return_value=httpx.Response(200, json={}))

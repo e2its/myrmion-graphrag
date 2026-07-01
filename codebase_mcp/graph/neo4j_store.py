@@ -36,24 +36,40 @@ class Neo4jGraphStore(GraphStore):  # pragma: no cover
         )
 
     def upsert_edge(self, edge: Edge) -> None:
-        self._run(
-            f"MATCH (a:{_LABEL} {{id:$src}}) "
-            f"MERGE (b:{_LABEL} {{id:$dst}}) "
-            "MERGE (a)-[r:REL {kind:$kind, callee:$callee, receiver:$recv}]->(b) "
-            "SET r.confidence=$conf, r.external=$ext",
-            src=edge.src, dst=edge.dst or f"?{edge.callee_name}:{edge.receiver}",
-            kind=edge.kind, callee=edge.callee_name, recv=edge.receiver,
-            conf=edge.confidence, ext=edge.external,
-        )
+        if edge.dst:
+            self._run(
+                f"MATCH (a:{_LABEL} {{id:$src}}) "
+                f"MERGE (b:{_LABEL} {{id:$dst}}) "
+                "MERGE (a)-[r:REL {kind:$kind, callee:$callee, receiver:$recv}]->(b) "
+                "SET r.confidence=$conf, r.external=$ext",
+                src=edge.src, dst=edge.dst,
+                kind=edge.kind, callee=edge.callee_name, recv=edge.receiver,
+                conf=edge.confidence, ext=edge.external,
+            )
+        else:
+            # Arista sin resolver: el destino NO es un símbolo real. Se guarda con una
+            # etiqueta aparte (:Unresolved) para que all_nodes() (solo :CodeSymbol) no lo
+            # devuelva y no contamine las queries.
+            self._run(
+                f"MATCH (a:{_LABEL} {{id:$src}}) "
+                "MERGE (b:Unresolved {id:$ph}) "
+                "MERGE (a)-[r:REL {kind:$kind, callee:$callee, receiver:$recv}]->(b) "
+                "SET r.confidence=$conf, r.external=$ext",
+                src=edge.src, ph=f"?{edge.callee_name}:{edge.receiver}",
+                kind=edge.kind, callee=edge.callee_name, recv=edge.receiver,
+                conf=edge.confidence, ext=edge.external,
+            )
 
     def delete_by_file(self, file: str) -> None:
         self._run(f"MATCH (n:{_LABEL} {{file:$f}}) DETACH DELETE n", f=file)
 
     def clear(self) -> None:
         self._run(f"MATCH (n:{_LABEL}) DETACH DELETE n")
+        self._run("MATCH (n:Unresolved) DETACH DELETE n")
 
     def replace_edges(self, edges) -> None:
         self._run(f"MATCH (:{_LABEL})-[r:REL]->() DELETE r")
+        self._run("MATCH (n:Unresolved) DETACH DELETE n")
         for e in edges:
             self.upsert_edge(e)
 
@@ -61,9 +77,9 @@ class Neo4jGraphStore(GraphStore):  # pragma: no cover
     def _to_node(self, rec) -> Node:
         d = dict(rec["n"])
         return Node(kind=d["kind"], qualified_name=d["qualified_name"], name=d["name"],
-                    file=d.get("file", ""), lineno=d.get("lineno", 0),
-                    end_lineno=d.get("end_lineno", 0), lang=d.get("lang", ""),
-                    body_hash=d.get("body_hash", ""))
+                    file=d.get("file") or "", lineno=d.get("lineno") or 0,
+                    end_lineno=d.get("end_lineno") or 0, lang=d.get("lang") or "",
+                    body_hash=d.get("body_hash") or "")
 
     def get_node(self, node_id):
         rows = self._run(f"MATCH (n:{_LABEL} {{id:$id}}) RETURN n", id=node_id)

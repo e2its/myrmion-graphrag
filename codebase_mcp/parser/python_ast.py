@@ -37,12 +37,17 @@ def _base_name(node):
 
 
 def _iter_calls(node):
-    """Itera las llamadas del ámbito actual sin entrar en defs/clases/lambdas anidados."""
+    """Itera las llamadas dentro de `node` sin entrar en defs/clases/lambdas anidados.
+
+    Se invoca por cada sentencia del CUERPO de la función, así que NO ve los decoradores
+    ni las anotaciones/defaults (que cuelgan del propio FunctionDef, no de su body) y no
+    los atribuye como llamadas internas.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+        return
+    if isinstance(node, ast.Call):
+        yield node
     for child in ast.iter_child_nodes(node):
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        if isinstance(child, ast.Call):
-            yield child
         yield from _iter_calls(child)
 
 
@@ -98,11 +103,12 @@ class PythonAstParser:
                           body_hash=_seg_hash(lines, stmt.lineno, end))
                 nodes.append(fn)
                 edges.append(Edge(src=container.id, kind="DEFINES", dst=fn.id, confidence="exact"))
-                for call in _iter_calls(stmt):
-                    name, receiver = _call_target(call.func)
-                    if name:
-                        edges.append(Edge(src=fn.id, kind="CALLS", callee_name=name,
-                                          receiver=receiver, confidence="unresolved"))
+                for stmt_body in stmt.body:
+                    for call in _iter_calls(stmt_body):
+                        name, receiver = _call_target(call.func)
+                        if name:
+                            edges.append(Edge(src=fn.id, kind="CALLS", callee_name=name,
+                                              receiver=receiver, confidence="unresolved"))
                 self._visit_body(stmt.body, fn, qn, "", file, lines, nodes, edges)
             elif isinstance(stmt, ast.ClassDef):
                 qn = f"{container_qn}.{stmt.name}"

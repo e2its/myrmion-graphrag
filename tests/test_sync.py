@@ -48,8 +48,8 @@ def test_sync_run_and_main(tmp_path, monkeypatch, capsys):
     res = sync.run(["m.py"], durable=True, root=root, store=store)
     assert res["destino"] == "durable"
 
-    monkeypatch.setenv("CODEBASE_STORAGE", "memory")
+    monkeypatch.setenv("CODEBASE_STORAGE", "filesystem")
     monkeypatch.setenv("CODEBASE_ROOT", str(root))
-    monkeypatch.setenv("CODEBASE_MEMORY_SNAPSHOT", str(tmp_path / "snap.json"))
+    monkeypatch.setenv("CODEBASE_SNAPSHOT", str(tmp_path / "snap.json"))
     assert sync.main(["--durable", "m.py"]) == 0
     assert sync.main([]) == 2

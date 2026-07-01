@@ -110,6 +110,27 @@ def test_check_ollama_model():
     assert "no responde" in backends.check_ollama_model(env)[1]
     assert backends.check_ollama_model({})[0] is False
 
+    # pediste 7b pero solo hay 32b -> NO disponible (no basta la misma base)
+    respx.get("http://ollama/api/tags").mock(return_value=httpx.Response(200, json={
+        "models": [{"name": "qwen2.5:32b"}]}))
+    ok, msg = backends.check_ollama_model(env)
+    assert ok is False and "ollama pull" in msg
+
+
+class _Gai(Exception):  # simula socket.gaierror por nombre de tipo
+    pass
+
+
+_Gai.__name__ = "gaierror"
+
+
+def test_healthcheck_dns_failure(monkeypatch):
+    def raise_dns(env):
+        raise _Gai("name resolution failed")
+    monkeypatch.setattr(backends, "_ping_postgres", raise_dns)
+    ok, msg = backends.healthcheck("postgres", {})
+    assert ok is False and "no responde" in msg
+
 
 def test_render_model_block():
     assert "qwen2.5:7b" in backends.render_model_block("local")

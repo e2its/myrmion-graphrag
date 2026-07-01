@@ -233,7 +233,8 @@ def healthcheck(backend: str, env: dict) -> tuple:
         name = type(e).__name__
         if "Auth" in name:
             return (False, f"{backend}: credenciales invalidas ({name}).")
-        if any(t in name for t in ("ServiceUnavailable", "Connection", "Operational")):
+        if any(t in name for t in ("ServiceUnavailable", "Connection", "Operational",
+                                   "gaierror", "OSError", "Timeout", "timeout")):
             return (
                 False,
                 f"{backend} no responde. Levantalo con ./db-up.sh {backend}.",
@@ -285,9 +286,9 @@ def check_ollama_model(env: dict) -> tuple:
         modelos = [m.get("name", "") for m in r.json().get("models", [])]
     except Exception:
         return (False, "Respuesta de Ollama no parseable.")
-    base = modelo.split(":")[0]
     for name in modelos:
-        if name == modelo or name.split(":")[0] == base:
+        # coincidencia EXACTA de tag; o, si no pediste tag, cualquier tag de esa base.
+        if name == modelo or (":" not in modelo and name.split(":")[0] == modelo):
             return (True, f"Modelo '{modelo}' disponible en Ollama.")
     return (
         False,

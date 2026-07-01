@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import pathlib
 import re
+from dataclasses import replace
 
 from ..models import Edge, Node
 from .base import ParseResult, module_name_from_path
@@ -31,7 +32,7 @@ _INHERITS = re.compile(r"^\s*Inherits\s+([\w.]+)", re.IGNORECASE)
 _IMPORTS = re.compile(r"^\s*Imports\s+([\w.]+)", re.IGNORECASE)
 _VB_NAME = re.compile(r'^\s*Attribute\s+VB_Name\s*=\s*"([^"]+)"', re.IGNORECASE)
 
-_CALL_CALL = re.compile(r"\bCall\s+(\w+)", re.IGNORECASE)
+_CALL_CALL = re.compile(r"\bCall\s+(\w+)\b(?!\.)", re.IGNORECASE)  # no captures el receptor de obj.Metodo
 _CALL_MEMBER = re.compile(r"\b(\w+)\.(\w+)\s*\(")
 _CALL_BARE = re.compile(r"\b(\w+)\s*\(")
 
@@ -49,6 +50,16 @@ _KEYWORDS = {
 def _seg_hash(lines, start, end) -> str:
     seg = "\n".join(lines[max(start - 1, 0):max(end, start)])
     return hashlib.md5(seg.encode("utf-8", "replace")).hexdigest()
+
+
+def _finalize_span(nodes, node, end_lineno, raw_lines):
+    """Al cerrar un proc/clase, fija su end_lineno y body_hash reales (para el histórico)."""
+    try:
+        i = nodes.index(node)
+    except ValueError:
+        return
+    nodes[i] = replace(node, end_lineno=end_lineno,
+                       body_hash=_seg_hash(raw_lines, node.lineno, end_lineno))
 
 
 def _strip_comment(line: str) -> str:
@@ -152,7 +163,8 @@ class VBParser:
                 continue
             if _CLASS_CLOSE.match(text_line):
                 if len(stack) > 1:
-                    stack.pop()
+                    popped = stack.pop()
+                    _finalize_span(nodes, popped[0], lineno, raw_lines)
                 continue
 
             m = _PROC_OPEN.match(text_line)
@@ -171,6 +183,8 @@ class VBParser:
                 current_proc = proc
                 continue
             if _PROC_CLOSE.match(text_line):
+                if current_proc is not None:
+                    _finalize_span(nodes, current_proc, lineno, raw_lines)
                 current_proc = None
                 continue
 

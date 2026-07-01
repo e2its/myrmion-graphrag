@@ -58,6 +58,7 @@ envía a Anthropic al razonar tu pregunta.
 - [Perfiles de modelo (local vs profesional)](#perfiles-de-modelo)
 - [Parametrizar según tu hardware (CPU/RAM/GPU/modelo)](#parametrizar-según-tu-hardware)
 - [Herramientas MCP](#herramientas-mcp)
+- [Lenguajes y parsers cubiertos](#lenguajes-y-parsers-cubiertos)
 - [Mantenimiento automático del codebase_inventory](#mantenimiento-automático-del-codebase_inventory)
 - [Sincronización incremental sin duplicados](#sincronización-incremental-sin-duplicados)
 - [Tests](#tests)
@@ -79,12 +80,17 @@ envía a Anthropic al razonar tu pregunta.
             └──────────┬───────────┘   └──────┬────────────────┘
                HTTP :9621                GraphStore pluggable
             ┌──────────▼───────────┐   ┌──────▼────────────────────────────┐
-            │  lightrag-server     │   │  memory (def) │ neo4j │ postgres   │
+            │  lightrag-server     │   │ filesystem(def) │ neo4j │ postgres │
             │  storage PLUGGABLE:  │   └────────────────────────────────────┘
             │  filesystem/neo4j/pg │
             │  /híbrido            │
             └──────────────────────┘
 ```
+
+> **`def` = backend por defecto.** Ambos servidores usan el mismo trío
+> `filesystem / neo4j / postgres`. Para el grafo de código, `filesystem` persiste el grafo en
+> un JSON en `config/` (sin BD externa, como el filesystem de LightRAG); `neo4j`/`postgres`
+> son las opciones profesionales.
 
 | Pieza | Rol | Dónde corre |
 |-------|-----|-------------|
@@ -188,9 +194,9 @@ python -m backends healthcheck neo4j     # o postgres
 # y desde Claude Code:  estado_rag   (reporta el backend activo)
 ```
 
-**El inventario de código** (`myrmion-codebase`) usa su propio `GraphStore` pluggable:
-`memory` (por defecto, snapshot JSON, sin BD), `neo4j` (recomendado; puede reutilizar la
-instancia de LightRAG) o `postgres`.
+**El inventario de código** (`myrmion-codebase`) usa su propio `GraphStore` pluggable con el
+mismo trío: `filesystem` (por defecto, grafo persistido en un JSON en `config/`, sin BD),
+`neo4j` (recomendado para uso pro; puede reutilizar la instancia de LightRAG) o `postgres`.
 
 ---
 
@@ -288,6 +294,29 @@ Modos de búsqueda: `mix` (recomendado), `hybrid`, `local`, `global`, `naive`.
 
 Cada llamada expone la **confianza** (`exact`/`heuristic`/`unresolved`) de las aristas para
 que valores tú la fiabilidad; nunca se adivina en ambigüedad.
+
+---
+
+## Lenguajes y parsers cubiertos
+
+El servidor `myrmion-codebase` elige el parser por la **extensión** del fichero. El grafo es
+el mismo para todos (nodos `Module/Class/Function/Method`, aristas `DEFINES/IMPORTS/INHERITS/
+CALLS/IMPLEMENTS`); solo cambia el motor de parseo:
+
+| Lenguaje | Extensiones | Parser | Notas |
+|----------|-------------|--------|-------|
+| **Python** | `.py` | `ast` (stdlib) | resolución semántica de scopes; cero dependencias |
+| **JavaScript** | `.js .jsx .mjs .cjs` | tree-sitter | `tree-sitter-javascript` |
+| **TypeScript / TSX** | `.ts .tsx` | tree-sitter | `tree-sitter-typescript` |
+| **Java** | `.java` | tree-sitter | `tree-sitter-java` |
+| **C#** | `.cs` | tree-sitter | `tree-sitter-c-sharp` |
+| **VB5/6 · VBScript** | `.bas .cls .frm .vbs` | propio (line-oriented) | `Sub`/`Function`/`Property Get\|Let\|Set`/`Class`, `Implements`, `Call` |
+| **VB.NET** | `.vb` | propio (dialecto `vbnet`) | `Namespace`/`Imports`/`Inherits`/`Structure`/`Interface`/`Enum`. La gramática `tree-sitter-vb-dotnet` es enchufable a futuro (sin wheel en PyPI hoy) |
+| **ASP clásico** | `.asp` | preprocesador → VBScript | extrae bloques `<% %>` y directivas `<!--#include-->` (→ `IMPORTS`) |
+
+> La resolución de llamadas de VB6/VBScript/VB.NET es heurística (no compila VB); expone
+> `confidence` para que valores la fiabilidad. Nuevos lenguajes tree-sitter se añaden con
+> registrar su gramática y extensión. El markup `.aspx` de ASP.NET queda para una fase posterior.
 
 ---
 

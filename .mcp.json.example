@@ -15,8 +15,8 @@
       "args": ["/RUTA/ABSOLUTA/myrmion-graphRAG/codebase_server.py"],
       "env": {
         "CODEBASE_ROOT": "/RUTA/ABSOLUTA/de/tu/codebase",
-        "CODEBASE_STORAGE": "memory",
-        "CODEBASE_MEMORY_SNAPSHOT": "/RUTA/ABSOLUTA/myrmion-graphRAG/config/codebase.json"
+        "CODEBASE_STORAGE": "filesystem",
+        "CODEBASE_SNAPSHOT": "/RUTA/ABSOLUTA/myrmion-graphRAG/config/codebase.json"
       }
     }
   }

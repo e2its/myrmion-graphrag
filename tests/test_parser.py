@@ -31,6 +31,17 @@ def test_python_nodes_and_edges():
     assert any(x.kind == "IMPORTS" and x.callee_name == "helper" for x in res.edges)
 
 
+def test_python_decorator_not_captured_as_call():
+    src = ("import functools\n"
+           "@functools.lru_cache()\n"
+           "def f():\n"
+           "    return g()\n")
+    res = PythonAstParser().parse_source(src, "m.py")
+    calls = {e.callee_name for e in res.edges if e.kind == "CALLS"}
+    assert "g" in calls              # llamada real del cuerpo
+    assert "lru_cache" not in calls  # el decorador NO es una llamada interna de f
+
+
 def test_python_syntax_error_graceful():
     res = PythonAstParser().parse_source("def broken(:\n", "bad.py")
     assert len(res.nodes) == 1 and res.nodes[0].kind == "Module"

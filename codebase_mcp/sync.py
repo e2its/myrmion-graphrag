@@ -26,7 +26,7 @@ def run(paths, durable=True, root=None, store=None) -> dict:
     )
     summary["destino"] = "durable" if durable else "overlay"
     if hasattr(store, "save_json"):
-        target = config.memory_snapshot_path() if durable else config.memory_snapshot_path() + ".overlay"
+        target = config.snapshot_path() if durable else config.snapshot_path() + ".overlay"
         try:
             store.save_json(target)
         except OSError:

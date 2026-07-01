@@ -14,9 +14,9 @@ def server_env(tmp_path, monkeypatch):
     root.mkdir()
     for name in ("util.py", "svc.py", "app.py", "orphan.py"):
         (root / name).write_text((MINI / name).read_text())
-    monkeypatch.setenv("CODEBASE_STORAGE", "memory")
+    monkeypatch.setenv("CODEBASE_STORAGE", "filesystem")
     monkeypatch.setenv("CODEBASE_ROOT", str(root))
-    monkeypatch.setenv("CODEBASE_MEMORY_SNAPSHOT", str(tmp_path / "snap.json"))
+    monkeypatch.setenv("CODEBASE_SNAPSHOT", str(tmp_path / "snap.json"))
     return root
 
 
@@ -67,7 +67,7 @@ def test_sincronizar_y_cambios(server_env):
     codebase_server.indexar_codebase()
     (server_env / "util.py").write_text("def helper():\n    return 99\n\ndef extra():\n    return 0\n")
     res = json.loads(codebase_server.sincronizar_codigo(["util.py"]))
-    assert res["destino"] == "overlay"
+    assert res["sincronizados"] == 1
     inv = json.loads(codebase_server.inventario())
     assert any(it["qualified_name"] == "util.extra" for it in inv)
 

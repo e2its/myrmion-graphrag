@@ -45,7 +45,7 @@ API_KEY="$(getcfg LIGHTRAG_API_KEY "$ENV_FILE")"
 PORT="$(getcfg PORT "$ENV_FILE")"; PORT="${PORT:-9621}"
 GRAPH_STORAGE="$(getcfg LIGHTRAG_GRAPH_STORAGE "$ENV_FILE")"
 CB_ROOT="$(getcfg CODEBASE_ROOT "$CB_ENV_FILE")"; CB_ROOT="${CB_ROOT:-$REPO_DIR}"
-CB_STORAGE="$(getcfg CODEBASE_STORAGE "$CB_ENV_FILE")"; CB_STORAGE="${CB_STORAGE:-memory}"
+CB_STORAGE="$(getcfg CODEBASE_STORAGE "$CB_ENV_FILE")"; CB_STORAGE="${CB_STORAGE:-filesystem}"
 
 echo "==> Generando config/mcp.json (2 servidores) y enlazando .mcp.json"
 cat > "$MCP_FILE" <<JSON
@@ -67,7 +67,7 @@ cat > "$MCP_FILE" <<JSON
       "env": {
         "CODEBASE_ROOT": "$CB_ROOT",
         "CODEBASE_STORAGE": "$CB_STORAGE",
-        "CODEBASE_MEMORY_SNAPSHOT": "$REPO_DIR/config/codebase.json"
+        "CODEBASE_SNAPSHOT": "$REPO_DIR/config/codebase.json"
       }
     }
   }
