@@ -1,79 +1,106 @@
-# GraphRAG local + MCP para Claude Code
+<p align="center">
+  <img src="https://raw.githubusercontent.com/e2its/myrmion-framework/main/assets/myrmion-logo.png" alt="Myrmion" width="140">
+</p>
 
-> Base de conocimiento **GraphRAG 100% local** (LightRAG + Ollama) conectada a
-> **Claude Code** vía **MCP**. Tus documentos nunca salen de tu máquina.
+<h1 align="center">Myrmion graphRAG</h1>
 
-Le das a Claude Code memoria sobre *tus* propios documentos —notas, manuales,
-código, papers, decisiones de proyecto— sin enviar nada a la nube y sin claves
-de API. Toda la inteligencia corre en tu equipo.
+<p align="center"><i>Memoria 100% local para Claude Code — GraphRAG de tus documentos y grafo de tu código, vía MCP. Sin nube, sin claves de API.</i></p>
+
+<p align="center">
+  <a href="#licencia"><img src="https://img.shields.io/badge/license-MIT-1D9E75" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/Claude_Code-MCP_server-378ADD" alt="Claude Code MCP server">
+  <img src="https://img.shields.io/badge/engine-LightRAG_%2B_Ollama-7F77DD" alt="LightRAG + Ollama">
+  <img src="https://img.shields.io/badge/parser-tree--sitter-444" alt="tree-sitter">
+  <img src="https://img.shields.io/badge/storage-Neo4j_%C2%B7_PostgreSQL-444" alt="Neo4j / PostgreSQL">
+  <img src="https://img.shields.io/badge/100%25-local-444" alt="100% local">
+  <a href="https://github.com/e2its/myrmion-framework"><img src="https://img.shields.io/badge/Myrmion-ecosystem-1b3a5c" alt="Myrmion ecosystem"></a>
+</p>
+
+<p align="center">
+  <b>Dos servidores MCP locales: <code>myrmion-graphrag</code> (documentos) y <code>myrmion-codebase</code> (código).</b>
+</p>
+
+---
+
+## Parte del ecosistema Myrmion
+
+[Myrmion](https://github.com/e2its/myrmion-framework) es un ecosistema opensource para
+adoptar IA corporativa con cultura propia. **Myrmion graphRAG** es una de sus **herramientas**:
+da a Claude Code memoria local sobre *tus documentos* y *tu código* sin que nada salga de tu
+máquina. Se usa **por sí sola**, sin requerir el resto del ecosistema.
+
+Dos memorias locales, expuestas como dos servidores MCP:
+
+- **`myrmion-graphrag`** — grafo de conocimiento sobre *tus documentos* (notas, manuales,
+  papers, decisiones). Motor: LightRAG + Ollama.
+- **`myrmion-codebase`** — grafo de *tu código*: dependencias, "¿a qué afecta esta función?",
+  "¿quién llama a X?", inventario (reutilizable / obligatoria / muerta) e histórico. Parser
+  multi-lenguaje (Python vía `ast`; JS/TS, Java, C# y VB.NET vía tree-sitter; VB6/VBScript y
+  ASP clásico con parser propio).
+
+Todo corre en tu equipo, sin claves de API para el indexado. Solo sale lo que Claude Code
+envía a Anthropic al razonar tu pregunta.
+
+> Otras piezas del ecosistema: [myrmion-blackbar-pii-guard](https://github.com/e2its/myrmion-blackbar-pii-guard)
+> (redacción de PII para Claude) · [myrmion-AI-factory](https://github.com/e2its/myrmion-AI-factory)
+> (SDLC agéntico gobernado) · [myrmion-framework](https://github.com/e2its/myrmion-framework) (el paraguas).
 
 ---
 
 ## Índice
 
-- [¿Por qué grafo y no un RAG normal?](#por-qué-grafo-y-no-un-rag-normal)
+- [Parte del ecosistema Myrmion](#parte-del-ecosistema-myrmion)
+
 - [Arquitectura](#arquitectura)
 - [Requisitos](#requisitos)
-- [Instalación](#instalación)
-- [Cómo funciona una consulta](#cómo-funciona-una-consulta)
-- [Las tres herramientas MCP](#las-tres-herramientas-mcp)
-- [Uso diario](#uso-diario)
-- [Indexar documentos](#indexar-documentos)
-- [Memoria y rendimiento](#memoria-y-rendimiento)
-- [Configuración](#configuración)
-- [Modos de búsqueda](#modos-de-búsqueda)
-- [Solución de problemas](#solución-de-problemas)
-- [FAQ](#faq)
+- [Instalación y conexionado](#instalación-y-conexionado)
+- [Backends de almacenamiento (filesystem / Neo4j / PostgreSQL / híbrido)](#backends-de-almacenamiento)
+- [Consistencia del híbrido (saga + reconciliación)](#consistencia-del-híbrido)
+- [Perfiles de modelo (local vs profesional)](#perfiles-de-modelo)
+- [Parametrizar según tu hardware (CPU/RAM/GPU/modelo)](#parametrizar-según-tu-hardware)
+- [Herramientas MCP](#herramientas-mcp)
+- [Lenguajes y parsers cubiertos](#lenguajes-y-parsers-cubiertos)
+- [Mantenimiento automático del codebase_inventory](#mantenimiento-automático-del-codebase_inventory)
+- [Sincronización incremental sin duplicados](#sincronización-incremental-sin-duplicados)
+- [Versionado de documentos](#versionado-de-documentos)
+- [Tests](#tests)
 - [Estructura del repo](#estructura-del-repo)
-- [Créditos](#créditos)
+- [Referencias / créditos](#referencias--créditos)
 - [Licencia](#licencia)
-
----
-
-## ¿Por qué grafo y no un RAG normal?
-
-Un RAG clásico trocea tus documentos, los convierte en vectores y, cuando
-preguntas, te trae los *fragmentos más parecidos* a tu pregunta. Funciona bien
-para "¿qué dice el documento sobre X?", pero se queda corto cuando lo que
-importa son las **conexiones** entre ideas que viven en sitios distintos.
-
-GraphRAG, además de los vectores, construye un **grafo de conocimiento**: al
-indexar, un LLM lee tus documentos y extrae *entidades* (conceptos, módulos,
-personas, componentes) y las *relaciones* entre ellas. Eso permite responder
-preguntas que un RAG normal no puede.
-
-**Ejemplo.** Tienes tres documentos: la spec del módulo de pagos, las notas de
-una reunión de seguridad y el changelog de autenticación. Preguntas:
-
-> ¿Qué conecta el módulo de pagos con el sistema de autenticación?
-
-- Un RAG normal te traería trozos que mencionan "pagos" o "autenticación" por
-  separado, y tendrías que atar cabos tú.
-- GraphRAG recorre las aristas del grafo: pagos → *usa* → tokens JWT → *emitidos
-  por* → servicio de auth → *cambió en* → changelog v2.3. Te devuelve esa
-  cadena, aunque ningún documento la cuente entera.
-
-La analogía: un RAG normal es un buscador de páginas; GraphRAG es un
-bibliotecario que ha leído todo y sabe **cómo se relacionan** las ideas.
 
 ---
 
 ## Arquitectura
 
 ```
-Tus documentos ──indexar──▶ LightRAG (grafo + vectores + Ollama) ──REST──▶
-        servidor MCP (este repo) ──stdio──▶ Claude Code en VS Code
+                         Claude Code (VS Code) ── cliente MCP
+                           │ stdio            │ stdio
+            ┌──────────────▼───────┐   ┌──────▼────────────────┐
+            │  myrmion-graphrag    │   │  myrmion-codebase     │
+            │  mcp_server.py       │   │  codebase_server.py   │
+            │  (documentos)        │   │  (código)             │
+            └──────────┬───────────┘   └──────┬────────────────┘
+               HTTP :9621                GraphStore pluggable
+            ┌──────────▼───────────┐   ┌──────▼────────────────────────────┐
+            │  lightrag-server     │   │ filesystem(def) │ neo4j │ postgres │
+            │  storage PLUGGABLE:  │   └────────────────────────────────────┘
+            │  filesystem/neo4j/pg │
+            │  /híbrido            │
+            └──────────────────────┘
 ```
+
+> **`def` = backend por defecto.** Ambos servidores usan el mismo trío
+> `filesystem / neo4j / postgres`. Para el grafo de código, `filesystem` persiste el grafo en
+> un JSON en `config/` (sin BD externa, como el filesystem de LightRAG); `neo4j`/`postgres`
+> son las opciones profesionales.
 
 | Pieza | Rol | Dónde corre |
 |-------|-----|-------------|
 | Ollama | LLM local (extrae entidades) + embeddings | localhost:11434 |
 | LightRAG | Grafo de conocimiento + índice vectorial + API REST | localhost:9621 |
-| `mcp_server.py` | Puente: traduce MCP ⇄ API REST de LightRAG | proceso local (stdio) |
-| Claude Code | Cliente que consume las herramientas | VS Code |
-
-El servidor MCP de este repo es un **puente fino** (~100 líneas): no reimplementa
-nada, solo expone las capacidades de LightRAG a Claude Code de forma estándar.
+| `mcp_server.py` | Servidor MCP de documentos (puente a LightRAG) | proceso local (stdio) |
+| `codebase_server.py` | Servidor MCP de código (parser + grafo propio) | proceso local (stdio) |
+| Neo4j / PostgreSQL | Backends profesionales (opcionales) | Docker `127.0.0.1` |
 
 ---
 
@@ -82,223 +109,286 @@ nada, solo expone las capacidades de LightRAG a Claude Code de forma estándar.
 - Python 3.11+
 - [Ollama](https://ollama.com) instalado y en ejecución
 - VS Code con la extensión de **Claude Code**
-- ~11 GB de RAM libres para indexar con `qwen2.5:7b` (ver [Memoria](#memoria-y-rendimiento))
+- ~11 GB de RAM libres para indexar documentos con `qwen2.5:7b`
+- (Opcional, para backends profesionales) Docker + Docker Compose
 
 ---
 
-## Instalación
+## Instalación y conexionado
+
+### 1. Modelos locales (una vez)
 
 ```bash
-# 1. Modelos locales (una sola vez)
 ollama pull qwen2.5:7b
 ollama pull nomic-embed-text
+```
 
-# 2. Servidor LightRAG (en otra terminal, déjalo corriendo)
-uv tool install "lightrag-hku[api]"   # o: pip install "lightrag-hku[api]"
-cp lightrag.env.example .env
-lightrag-server                        # Web UI: http://localhost:9621/webui
+### 2. Setup del proyecto
 
-# 3. Indexar tus documentos (mételos antes en ./documentos)
-python ingest.py ./documentos
-
-# 4. Servidor MCP + config de Claude Code
+```bash
 ./setup.sh
 ```
 
-`setup.sh` crea el entorno virtual, instala dependencias y reescribe `.mcp.json`
-con las rutas absolutas de tu máquina. Abre el repo en VS Code con Claude Code y
-comprueba con `/mcp` que `graphrag-local` aparece conectado con sus 3
-herramientas.
+`setup.sh` crea el venv, instala dependencias (`requirements.txt` + `requirements-codebase.txt`),
+crea tu config personal en `config/` (desde las plantillas `*.example`), genera
+`config/mcp.json` con **los dos servidores** y sus rutas absolutas, crea los enlaces
+`.env` y `.mcp.json` en la raíz, copia los scripts locales (`db-up.sh`, `migrate-backend.sh`)
+y **activa el git `pre-push` hook** del inventario.
 
----
+Toda tu configuración personal vive en **`config/`** (gitignored); el repo solo versiona
+las plantillas. Edita `config/lightrag.env` (rutas, API key, perfil de storage) y
+`config/codebase.env` (raíz del código, backend), y **re-ejecuta `./setup.sh`**.
 
-## Cómo funciona una consulta
+### 3. Servidor LightRAG (documentos)
 
-El detalle clave del diseño: la herramienta `buscar_conocimiento` viene con
-`solo_contexto=True` por defecto.
-
-- **Indexar** (una vez, fase pesada): LightRAG usa el LLM local para extraer
-  entidades y relaciones de cada documento. Aquí se construye el grafo.
-- **Consultar** (a diario, fase barata): LightRAG *recupera* del grafo el
-  contexto relevante (entidades + relaciones + fragmentos) y se lo entrega a
-  Claude. El razonamiento lo hace **Claude**, no el modelo local pequeño.
-
-Esto te da lo mejor de los dos mundos: privacidad y coste cero del local para
-guardar y recuperar, y la capacidad de razonamiento de Claude para responder.
-Si prefieres que conteste el LLM local (sin pasar por Claude), pon
-`solo_contexto=False`.
-
----
-
-## Las tres herramientas MCP
-
-| Herramienta | Qué hace | Parámetros |
-|-------------|----------|------------|
-| `buscar_conocimiento` | Recupera material relevante del grafo | `consulta`, `modo="mix"`, `solo_contexto=True`, `top_k=40` |
-| `anadir_documento` | Indexa un texto nuevo al vuelo (asíncrono) | `texto`, `descripcion=""` |
-| `estado_rag` | Comprueba que LightRAG responde | — |
-
-Claude Code decide solo cuándo usarlas (el `CLAUDE.md` se lo explica), pero
-también puedes pedírselas de forma explícita.
-
----
-
-## Uso diario
-
-Pídele a Claude Code en lenguaje natural. Algunos ejemplos:
-
-```
-Llama a estado_rag y dime si la base responde.
-
-Según mis documentos, ¿qué decisiones tomamos sobre el sistema de caché?
-
-Busca en mi base de conocimiento cómo se relaciona el módulo de pagos con
-el de autenticación, y resúmelo.
-
-Añade esta nota a la base: "El endpoint /v2/orders deja de soportar XML
-en marzo; migrar a JSON antes."
+```bash
+uv tool install "lightrag-hku[api]"   # o: pip install "lightrag-hku[api]"
+lightrag-server                        # otra terminal; lee .env -> config/lightrag.env
 ```
 
-Como el grafo recupera y Claude razona, las respuestas mejoran cuanto mejor
-indexado esté tu material. Reindexa cuando añadas documentos importantes.
+### 4. Indexar
+
+```bash
+# Documentos -> myrmion-graphrag
+python ingest.py "$INPUT_DIR" --api-key "$LIGHTRAG_API_KEY" --watch
+
+# Código -> myrmion-codebase  (desde Claude Code: tool  indexar_codebase )
+```
+
+### 5. Conectar Claude Code
+
+Abre el repo en VS Code con Claude Code. El `.mcp.json` de la raíz hace que Claude Code
+descubra **ambos** servidores. Verifica con `/mcp` que aparecen conectados:
+**`myrmion-graphrag`** y **`myrmion-codebase`**. Llama a `estado_rag` y a
+`estado_indexado` para diagnosticar cada uno.
+
+> El servidor `myrmion-codebase` puede apuntar a **cualquier** codebase: pon su ruta en
+> `CODEBASE_ROOT` (en `config/codebase.env`) y re-ejecuta `./setup.sh`.
 
 ---
 
-## Indexar documentos
+## Backends de almacenamiento
 
-Tres formas, la que prefieras:
+LightRAG usa 4 capas de storage (KV, Vector, Grafo, DocStatus). Eliges **un perfil** en
+`config/lightrag.env` (bloque de almacenamiento). **Caveat**: el storage debe elegirse
+**antes** de indexar el primer documento; cambiarlo obliga a **re-indexar** (usa
+`./migrate-backend.sh`).
 
-1. **Carpeta vigilada:** deja ficheros en `./documentos` (el `INPUT_DIR` del
-   `.env`) y dispara un escaneo desde la Web UI o con `POST /documents/scan`.
-2. **Web UI:** arrastra ficheros en `http://localhost:9621/webui` (además
-   visualizas el grafo).
-3. **Script en lote:** `python ingest.py ./mis_documentos`
+| Perfil | Qué usa | Cuándo |
+|--------|---------|--------|
+| **A · filesystem** (def.) | Json / Nano / NetworkX | Empezar, corpus pequeño/medio, 100% sin BD |
+| **B · neo4j** | Neo4j (grafo) + resto local | Quieres visualizar/consultar el grafo con Cypher |
+| **C · postgres** | PostgreSQL todo-en-uno (pgvector + AGE) | Unificación y garantía transaccional máxima |
+| **D · híbrido** *(recomendado pro)* | Postgres (KV/vector/estado) + Neo4j (grafo) | pgvector escalable **y** grafo nativo/visual |
 
-Formatos soportados: `.md`, `.txt`, `.pdf`, `.docx`, `.doc`, `.pptx`, `.csv`,
-`.rst`, `.html`. La indexación corre en segundo plano; la primera vez tarda
-(es donde se construye el grafo), las consultas posteriores son rápidas.
+Levanta los backends con Docker (bind a `127.0.0.1`, nada sale de tu máquina):
 
----
+```bash
+./db-up.sh neo4j start        # Neo4j en :7474 (browser) / :7687 (bolt)
+./db-up.sh postgres start     # Postgres en :5432
+./db-up.sh pro start          # HÍBRIDO: ambos a la vez
+```
 
-## Memoria y rendimiento
+Valida la conexión y qué backend está activo:
 
-Referencia para **24 GB de RAM, Linux, CPU** (sin GPU), con VS Code + Claude
-Code abiertos. La cifra que importa no es el peso del modelo, sino la **KV cache
-a 32k de contexto** que LightRAG necesita para extraer entidades.
+```bash
+python -m backends healthcheck neo4j     # o postgres
+# y desde Claude Code:  estado_rag   (reporta el backend activo)
+```
 
-| Modelo | RAM aprox. (indexado a 32k) | Veredicto con 24 GB |
-|--------|-----------------------------|---------------------|
-| `qwen2.5:3b` | ~7 GB | Sobra; algo menos de calidad en relaciones |
-| `qwen2.5:7b` + KV `q8_0` | ~11 GB | **Recomendado**: cómodo con todo abierto |
-| `qwen2.5:14b` | ~17 GB | Cabe, pero sin margen junto a las apps |
-
-Trucos para máquinas justas (ya aplicados en `lightrag.env.example`):
-`OLLAMA_KV_CACHE_TYPE=q8_0` (corta la KV cache ~a la mitad), `MAX_ASYNC=1` y
-`EMBEDDING_BATCH_NUM=1`.
-
-Dos cosas que quitan presión:
-
-- **El indexado es de una vez y puede ir de noche.** Aunque tire algo de swap,
-  lo lanzas y por la mañana está. En CPU pura cuenta con ~3-6 tokens/s.
-- **Consultar es barato.** Con `solo_contexto=True`, el modelo local apenas
-  genera. Puedes indexar una vez con `qwen2.5:14b` (mejor grafo, cerrando
-  VS Code) y luego trabajar con `7b`.
-
-**¿Tienes GPU NVIDIA?** La VRAM es aparte de la RAM del sistema: Ollama descarga
-el modelo a la tarjeta, el indexado pasa de minutos y la RAM queda libre para
-VS Code. Con 8 GB de VRAM entra `7b` holgado; con 12 GB, hasta `14b`.
+**El inventario de código** (`myrmion-codebase`) usa su propio `GraphStore` pluggable con el
+mismo trío: `filesystem` (por defecto, grafo persistido en un JSON en `config/`, sin BD),
+`neo4j` (recomendado para uso pro; puede reutilizar la instancia de LightRAG) o `postgres`.
 
 ---
 
-## Configuración
+## Consistencia del híbrido
 
-Variables del **servidor LightRAG** (en `.env`, ver `lightrag.env.example`):
+El perfil híbrido escribe el grafo en Neo4j y los vectores/KV/estado en Postgres: **dos
+bases de datos sin transacción distribuida**. Para que **nunca queden desalineadas**,
+`myrmion-graphrag` incluye un **supervisor de consistencia** (`consistency.py`):
 
-| Variable | Por defecto | Para qué |
-|----------|-------------|----------|
-| `PORT` | 9621 | Puerto del servidor LightRAG |
-| `LLM_MODEL` | qwen2.5:7b | Modelo que extrae entidades/relaciones |
-| `OLLAMA_LLM_NUM_CTX` | 32768 | Contexto mínimo (crítico, no bajar de 32k) |
-| `OLLAMA_KV_CACHE_TYPE` | q8_0 | Cuantización de la KV cache (ahorra RAM) |
-| `EMBEDDING_MODEL` | nomic-embed-text | Modelo de embeddings |
-| `MAX_ASYNC` | 2 | Llamadas LLM en paralelo |
-| `EMBEDDING_BATCH_NUM` | 8 | Tamaño de lote de embeddings |
+- **Health-gate**: no se escribe salvo que Neo4j **y** Postgres **y** LightRAG respondan.
+- **Saga con reintentos automáticos + compensación**: cada operación de documento es una
+  saga de pasos idempotentes; si un paso agota reintentos, se compensan los previos.
+- **Reconciliación**: detecta deriva (docs sin grafo/sin vectores, huérfanos) y la repara
+  (reindexar / borrar huérfanos).
 
-Variables del **servidor MCP** (en `.mcp.json`, sección `env`):
+Tools MCP (solo aplican al híbrido): **`verificar_alineacion`** (dry-run) y
+**`reconciliar(aplicar=True)`** (repara).
 
-| Variable | Por defecto | Para qué |
-|----------|-------------|----------|
-| `LIGHTRAG_BASE_URL` | http://localhost:9621 | URL del servidor LightRAG |
-| `LIGHTRAG_MODE` | mix | Modo de búsqueda por defecto |
-| `LIGHTRAG_TIMEOUT` | 120 | Timeout HTTP en segundos |
-| `LIGHTRAG_API_KEY` | (vacío) | Clave si activaste autenticación en LightRAG |
+> Compromiso honesto: es **consistencia fuerte auto-reparable** (se detecta y repara toda
+> deriva), no un candado 2PC instantáneo. Si necesitas una garantía transaccional dura sin
+> reconciliación, usa el **Perfil C** (Postgres todo-en-uno: una sola transacción ACID).
+> El inventario de código va en Neo4j (grafo puro, un solo store → sin deriva posible).
 
 ---
 
-## Modos de búsqueda
+## Perfiles de modelo
 
-Se pasan en `buscar_conocimiento(consulta, modo="...")`:
+Los backends profesionales suelen correr en hardware potente, donde interesa un Qwen mayor
+para maximizar la extracción y la fiabilidad. En `config/lightrag.env` hay presets:
 
-| Modo | Cuándo usarlo |
-|------|---------------|
-| `mix` | **Recomendado.** Combina grafo y vectores. |
-| `hybrid` | Grafo + vectores, otra estrategia de fusión. |
-| `local` | Entidades concretas y sus atributos directos. |
-| `global` | Temas amplios, visión de conjunto. |
-| `naive` | Solo vectores (RAG clásico, ignora el grafo). |
+| Perfil | LLM | Contexto / paralelismo | Hardware |
+|--------|-----|------------------------|----------|
+| **local** (def.) | `qwen2.5:7b` | `NUM_CTX=8192`, `MAX_ASYNC=1` | CPU / 24 GB |
+| **profesional** | `qwen2.5:32b` (o `:14b`/`:72b`, `qwen3:*`) | `NUM_CTX=32768`, `MAX_ASYNC=4` | GPU / mucha RAM |
 
----
-
-## Solución de problemas
-
-**`No pude conectar con LightRAG en http://localhost:9621`**
-El servidor LightRAG no está arrancado. Lánzalo con `lightrag-server` en otra
-terminal y comprueba `http://localhost:9621/docs`.
-
-**`context length exceeded` al indexar**
-Ollama está usando 8k de contexto en vez de 32k. Asegúrate de tener
-`OLLAMA_LLM_NUM_CTX=32768` en el `.env` y reinicia el servidor. Es el fallo
-más común.
-
-**Los embeddings dan timeout (CPU)**
-Baja `EMBEDDING_BATCH_NUM=1` en el `.env`. Si persiste, usa un modelo de
-extracción más pequeño (`qwen2.5:3b`).
-
-**Las consultas largas se cortan por timeout**
-Sube `LIGHTRAG_TIMEOUT` en la sección `env` de `.mcp.json` (p. ej. a `300`),
-o usa un modo más ligero (`local`, `naive`).
-
-**Claude Code no muestra el servidor en `/mcp`**
-Reabre el proyecto tras ejecutar `./setup.sh`. Verifica que `.mcp.json` tiene
-rutas absolutas válidas (el `python` del venv y `mcp_server.py`). Llama primero
-a `estado_rag` para aislar si el problema es la conexión a LightRAG.
-
-**El grafo no encuentra relaciones que esperabas**
-Falta indexado o el modelo de extracción es pequeño. Reindexa, o haz una pasada
-con `qwen2.5:14b` para un grafo más rico.
+**Regla crítica:** cambiar `LLM_MODEL` **no** obliga a reindexar; cambiar
+`EMBEDDING_MODEL`/`EMBEDDING_DIM` **sí** (la dimensión del vector cambia). Descarga el
+modelo con `ollama pull qwen2.5:32b`.
 
 ---
 
-## FAQ
+## Parametrizar según tu hardware
 
-**¿De verdad es todo local?** Sí. LightRAG y Ollama corren en tu máquina y el
-grafo se guarda en `rag_storage/`. Lo único que sale es lo que Claude Code envía
-a Anthropic al razonar tu pregunta (igual que cualquier uso de Claude Code).
+Ajusta `config/lightrag.env` según CPU/RAM/GPU. Referencia (Q4): `7b≈6GB`, `14b≈10GB`,
+`32b≈20GB`, `72b≈48GB` de VRAM/RAM.
 
-**¿Puedo usar Claude para indexar en vez del modelo local?** El razonamiento de
-respuesta sí puede ir por Claude (es el modo por defecto). La *extracción* al
-indexar usa el LLM local; podrías apuntarla a un proveedor externo, pero
-perderías el "100% local".
+| Escenario | `LLM_MODEL` | `NUM_CTX` | `MAX_ASYNC` | `EMBEDDING_BATCH_NUM` | Timeouts | KV cache |
+|-----------|-------------|-----------|-------------|-----------------------|----------|----------|
+| CPU-only 16 GB | `qwen2.5:3b` | 8192 | 1 | 1 | altos | `q8_0` |
+| CPU-only 24-32 GB | `qwen2.5:7b` | 8192 | 1 | 4 | altos | `q8_0` |
+| GPU 8-12 GB VRAM | `qwen2.5:7b`/`14b` | 16384 | 2 | 8 | medios | `q8_0` |
+| GPU 24 GB | `qwen2.5:32b` | 32768 | 4 | 16 | bajos | `f16` |
+| GPU 48 GB+ | `qwen2.5:72b`/`qwen3:32b` | 32768+ | 6 | 32 | bajos | `f16` |
 
-**¿Cuántos documentos aguanta?** Con almacenamiento en ficheros, miles sin
-problema. Para volúmenes grandes, LightRAG soporta Neo4j / PostgreSQL / Milvus
-cambiando las variables de almacenamiento.
+**Perillas:** `MAX_ASYNC` = llamadas LLM en paralelo (CPU=1; en GPU sube según VRAM).
+`OLLAMA_LLM_NUM_CTX` = ventana para extracción (32k+ ideal, pero consume RAM/VRAM; 8k en
+CPU para evitar swap). `OLLAMA_KV_CACHE_TYPE=q8_0` comprime la KV cache. Sube timeouts en
+CPU. Ollama usa la GPU automáticamente si está disponible (`OLLAMA_NUM_PARALLEL`, capas
+descargadas según VRAM). Regla de oro: sube modelo/`NUM_CTX`/`MAX_ASYNC` **solo si el
+hardware lo aguanta sin swap**; en CPU, prioriza terminar el indexado antes que calidad
+máxima.
 
-**¿Tengo que reindexar todo al añadir un documento?** No. La indexación es
-incremental: solo se procesa lo nuevo.
+---
 
-**¿Funciona en Windows / Mac?** Sí. En `setup.sh` y rutas, usa el equivalente de
-tu sistema (en Windows, la ruta completa al `python.exe` del venv).
+## Herramientas MCP
+
+### `myrmion-graphrag` (documentos)
+
+| Herramienta | Qué hace |
+|-------------|----------|
+| `buscar_conocimiento(consulta, modo="mix", solo_contexto=True, top_k=40)` | Recupera contexto del grafo para que **tú** razones |
+| `anadir_documento(texto, descripcion="")` | Indexa un texto al vuelo (asíncrono) |
+| `sincronizar_documento(ruta, texto="")` | Actualiza un documento tras editarlo **sin duplicar** y **versionado** (skip si el hash no cambió; delete + insert/upload si cambió) |
+| `sincronizar_documentos(carpeta="")` | Sincroniza una carpeta entera: added/modified/removed por **hash**, crea un snapshot |
+| `historico_documento(ruta)` | Evolución versionada del documento (added/modified/removed por commit) |
+| `estado_documentos()` | Nº de documentos rastreados y último snapshot |
+| `estado_rag()` | Salud de LightRAG + backend de storage activo |
+| `verificar_alineacion()` / `reconciliar(aplicar=False)` | Consistencia Neo4j⇄Postgres (perfil híbrido) |
+
+Modos de búsqueda: `mix` (recomendado), `hybrid`, `local`, `global`, `naive`.
+
+### `myrmion-codebase` (código)
+
+| Herramienta | Qué hace |
+|-------------|----------|
+| `indexar_codebase(ruta="", incremental=False)` | Indexa/reindexa el codebase |
+| `sincronizar_codigo(rutas)` | Sync incremental idempotente tras editar |
+| `dependencias_de(simbolo, profundidad=1)` | De qué depende (callees) |
+| `quien_llama_a(simbolo, profundidad=1)` | Quién lo llama (callers) |
+| `a_que_afecta(simbolo, profundidad=5)` | **Blast radius**: qué se afecta si lo cambias |
+| `inventario(filtro="")` | Símbolos con etiquetas reusable/mandatory/dead |
+| `codigo_muerto()` | Funciones/clases sin callers ni export |
+| `arquitectura()` | Lenguajes, módulos, hotspots, reutilizables, muertos |
+| `cambios_desde(git_ref)` | Ficheros cambiados + blast radius de cada símbolo |
+| `anotar_simbolo(simbolo, etiqueta, nota="")` | Anotación persistente (mandatory/reusable/keep/…) |
+| `historico(simbolo)` | Evolución added/modified/removed por commit |
+| `estado_indexado()` | Último snapshot y si el codebase cambió desde entonces |
+
+Cada llamada expone la **confianza** (`exact`/`heuristic`/`unresolved`) de las aristas para
+que valores tú la fiabilidad; nunca se adivina en ambigüedad.
+
+---
+
+## Lenguajes y parsers cubiertos
+
+El servidor `myrmion-codebase` elige el parser por la **extensión** del fichero. El grafo es
+el mismo para todos (nodos `Module/Class/Function/Method`, aristas `DEFINES/IMPORTS/INHERITS/
+CALLS/IMPLEMENTS`); solo cambia el motor de parseo:
+
+| Lenguaje | Extensiones | Parser | Notas |
+|----------|-------------|--------|-------|
+| **Python** | `.py` | `ast` (stdlib) | resolución semántica de scopes; cero dependencias |
+| **JavaScript** | `.js .jsx .mjs .cjs` | tree-sitter | `tree-sitter-javascript` |
+| **TypeScript / TSX** | `.ts .tsx` | tree-sitter | `tree-sitter-typescript` |
+| **Java** | `.java` | tree-sitter | `tree-sitter-java` |
+| **C#** | `.cs` | tree-sitter | `tree-sitter-c-sharp` |
+| **VB.NET** | `.vb` | **tree-sitter** | grammar `vb` de `tree-sitter-language-pack`: `Class`/`Module`/`Structure`/`Interface`/`Enum`, `Sub`/`Function`, `Imports`, llamadas |
+| **VB5/6 · VBScript** | `.bas .cls .frm .vbs` | propio (line-oriented) | `Sub`/`Function`/`Property Get\|Let\|Set`/`Class`, `Implements`, `Call` (sin gramática tree-sitter fiable) |
+| **ASP clásico** | `.asp` | preprocesador → VBScript | extrae bloques `<% %>` y directivas `<!--#include-->` (→ `IMPORTS`) |
+
+> La resolución de llamadas es **heurística** en todos los lenguajes (tree-sitter es
+> sintáctico; no hay análisis de tipos): se expone `confidence` (`exact`/`heuristic`/
+> `unresolved`) para que valores la fiabilidad. En VB.NET la herencia (`Inherits`/`Implements`)
+> se omite por ser poco fiable en la gramática. Nuevos lenguajes tree-sitter se añaden
+> registrando su gramática y extensión. El markup `.aspx` de ASP.NET queda para fase posterior.
+
+---
+
+## Mantenimiento automático del codebase_inventory
+
+El inventario **durable** refleja **solo la rama `main`**; editar en ramas de feature no lo
+muta (si la rama nunca se mergea, no deja símbolos fantasma). Tres capas:
+
+1. **Instrucciones en `CLAUDE.md`**: Claude llama a `sincronizar_codigo` tras editar.
+2. **Hook `PostToolUse`** (`.claude/settings.json` → `hooks/sync_on_edit.sh`): mantiene
+   caliente el **overlay** de sesión tras cada Edit/Write (nunca el durable).
+3. **git `pre-push` hook** (`hooks/pre-push`, activado por `setup.sh` vía
+   `core.hooksPath`): al hacer push a `main`, reconcilia el inventario canónico con el diff
+   y **aborta el push** si no queda consistente. Lo ejecuta git, no el modelo → **no se
+   puede saltar**.
+
+---
+
+## Sincronización incremental sin duplicados
+
+`sincronizar_codigo(["ruta"])` (y el CLI `python -m codebase_mcp.sync`) actualizan el grafo
+tras editar, garantizando:
+
+- **Sin duplicados**: `Node.id` estable (`kind:qualified_name`) + upsert idempotente.
+- **Sin residuos**: borra todos los nodos/aristas del fichero antes de re-parsear (los
+  símbolos renombrados/eliminados desaparecen).
+- **Consistencia cruzada**: re-resuelve todas las llamadas, así ninguna arista de otro
+  fichero queda colgando.
+- **Barato**: no-op si el hash del fichero no cambió.
+
+---
+
+## Versionado de documentos
+
+LightRAG guarda solo la versión **actual** de cada documento y deduplica por **nombre**
+(archiva los duplicados en vez de actualizar): si el contenido cambia pero el nombre no, un
+re-upload ingenuo **pierde el update**. Por encima de LightRAG hay un **ledger de documentos**
+que reutiliza la misma maquinaria que el inventario de código (snapshots + histórico), con la
+identidad = basename y el `body_hash` = **hash de contenido/bytes**:
+
+- **Detección por hash, no por nombre**: `sincronizar_documento(ruta)` / `sincronizar_documentos(carpeta)`
+  reindexan **solo** si el hash cambió (no-op si no), y hacen **delete + insert/upload** cuando
+  cambió → nunca se pierde un update ni se duplica. Funciona con binarios (pdf/docx: se re-sube
+  el fichero por multipart).
+- **Histórico**: cada sync crea un **snapshot** (etiquetado con el commit git) y registra
+  added/modified/removed → `historico_documento(ruta)` y `estado_documentos()`, igual que el
+  codebase.
+- **Batch seguro**: `python ingest.py "$INPUT_DIR" --sync` usa el ledger para saltar lo no
+  cambiado y **actualizar** (borrar+subir) lo modificado, en vez de dejar que LightRAG archive
+  el duplicado.
+
+El ledger vive en `config/docs.json` (var `DOCS_LEDGER`), gitignored.
+
+---
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt      # pytest, pytest-cov, respx, tree-sitter, ...
+python -m pytest                         # cobertura mínima exigida: 80%
+```
+
+87 tests, ~87% de cobertura. Todo corre **sin servicios externos** (HTTP mockeado con
+`respx`, grafo en memoria, git real en `tmp_path`). Los tests que requieren Neo4j/Postgres
+reales van marcados `@pytest.mark.integration` y se excluyen por defecto.
 
 ---
 
@@ -306,30 +396,39 @@ tu sistema (en Windows, la ruta completa al `python.exe` del venv).
 
 ```
 .
-├── mcp_server.py          # servidor MCP (puente a la API REST de LightRAG)
-├── ingest.py              # ingesta en lote de una carpeta
-├── lightrag.env.example   # config del servidor LightRAG (afinada 24 GB / CPU)
-├── .mcp.json              # config de Claude Code (la rellena setup.sh)
-├── setup.sh               # crea venv, instala deps y resuelve rutas absolutas
-├── requirements.txt
-├── CLAUDE.md              # contexto del proyecto para Claude Code
-├── documentos/            # deja aquí tus documentos a indexar
-├── LICENSE
-└── README.md
+├── mcp_server.py            # servidor MCP de documentos (LightRAGClient)
+├── codebase_server.py       # servidor MCP de código
+├── codebase_mcp/            # paquete: parsers, GraphStore, resolver, queries, inventory,
+│                            #          gitutil, history, indexer, sync
+├── backends.py              # perfiles de storage + healthcheck + modelos (testeable)
+├── consistency.py           # saga + reconciliación del híbrido (testeable)
+├── consistency_readers.py   # cableado a Neo4j/Postgres reales (integración)
+├── ingest.py                # ingesta en lote de documentos
+├── docker-compose.yml       # Neo4j / Postgres (perfiles)
+├── hooks/                   # pre-push (gate del inventario) + sync_on_edit (PostToolUse)
+├── tests/                   # suite pytest + fixtures/mini_codebase
+├── pyproject.toml           # config de pytest/coverage
+├── *.env.example / .mcp.json.example / *.sh.example   # PLANTILLAS públicas
+└── CLAUDE.md / README.md / LICENSE
+
+# Generado en local, NUNCA versionado (gitignored):
+#   config/            TU config real (lightrag.env, codebase.env, mcp.json, codebase.json)
+#   .env  .mcp.json    enlaces a config/
+#   db-up.sh  migrate-backend.sh  venv/  rag_storage/
 ```
 
 ---
 
-## Créditos
+## Referencias / créditos
 
-- [LightRAG](https://github.com/HKUDS/LightRAG) (HKUDS) — el motor GraphRAG.
-- [Ollama](https://ollama.com) — modelos locales (LLM y embeddings).
-- [Model Context Protocol](https://modelcontextprotocol.io) — el estándar que
-  conecta las herramientas con Claude Code.
+Este proyecto toma como base y se inspira en:
 
-Atajo: existe el paquete `lightrag-mcp` (`pip install lightrag-mcp`) que hace
-algo parecido en 3 líneas. Este repo te da el código para entenderlo, auditarlo
-y modificarlo.
+- [HKUDS/LightRAG](https://github.com/HKUDS/LightRAG) — motor GraphRAG (grafo + vectores + storage pluggable).
+- [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — concepto del servidor de inteligencia de codebase.
+- [tree-sitter](https://tree-sitter.github.io/) + gramáticas `tree-sitter-javascript/typescript/java/c-sharp` y [tree-sitter-language-pack](https://github.com/kreuzberg-dev/tree-sitter-language-pack) (grammar `vb` para VB.NET) — parsing multi-lenguaje.
+- [Ollama](https://ollama.com) y [Qwen](https://github.com/QwenLM) — modelos locales (LLM y embeddings).
+- [Model Context Protocol](https://modelcontextprotocol.io) — el estándar que conecta las herramientas con Claude Code.
+- [Neo4j](https://neo4j.com) y [PostgreSQL](https://www.postgresql.org) (pgvector + [Apache AGE](https://age.apache.org)) — backends profesionales.
 
 ---
 

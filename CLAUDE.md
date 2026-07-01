@@ -1,60 +1,81 @@
 # CLAUDE.md
 
-Contexto del proyecto para Claude Code.
+Contexto del proyecto **myrmion-graphRAG** para Claude Code.
 
 ## Qué es esto
 
-Una base de conocimiento **GraphRAG 100% local** (LightRAG + Ollama) expuesta a
-Claude Code mediante un servidor **MCP**. Todo corre en la máquina del usuario;
-ningún documento sale al exterior.
+Dos memorias 100% locales expuestas a Claude Code como **dos servidores MCP**:
 
-Flujo: documentos → LightRAG (grafo + vectores + Ollama) → servidor MCP (`mcp_server.py`) → Claude Code.
+- **`myrmion-graphrag`** — GraphRAG sobre los *documentos* del usuario (LightRAG + Ollama).
+- **`myrmion-codebase`** — grafo de *código*: dependencias, impacto, inventario, histórico.
 
-## Herramientas MCP disponibles (servidor `graphrag-local`)
+Todo corre en la máquina del usuario; ningún documento ni código sale al exterior.
 
-Cuando el usuario pregunte por algo que probablemente viva en sus documentos
-indexados (notas, manuales, código, papers, decisiones de proyecto…) y no esté
-en el contexto de la conversación, usa estas herramientas en lugar de suponer:
+## Herramientas del servidor `myrmion-graphrag` (documentos)
 
-- `buscar_conocimiento(consulta, modo="mix", solo_contexto=True, top_k=40)`
-  Recupera material relevante del grafo. Con `solo_contexto=True` (por defecto)
-  devuelve el contexto crudo (entidades, relaciones, fragmentos) para que **tú**
-  razones sobre él, en vez de la respuesta del LLM local pequeño. Úsalo como
-  primera opción para preguntas sobre el contenido del usuario.
-- `anadir_documento(texto, descripcion="")`
-  Indexa un texto nuevo sobre la marcha (asíncrono).
-- `estado_rag()`
-  Comprueba que el servidor LightRAG responde. Llámalo primero si una búsqueda falla.
+Cuando el usuario pregunte por algo que probablemente viva en sus documentos indexados
+(notas, manuales, papers, decisiones) y no esté en el contexto, usa estas herramientas en
+lugar de suponer:
 
-Modos de búsqueda: `mix` (recomendado, grafo + vectores), `hybrid`, `local`
-(entidades concretas), `global` (temas amplios), `naive` (solo vectores).
+- `buscar_conocimiento(consulta, modo="mix", solo_contexto=True, top_k=40)` — recupera el
+  contexto crudo (entidades, relaciones, fragmentos) para que **tú** razones. Primera opción.
+- `anadir_documento(texto, descripcion="")` — indexa un texto al vuelo (asíncrono).
+- `sincronizar_documento(ruta, texto="")` — tras editar un documento indexado: reindexa **sin
+  duplicar** y **versionado** (no-op si el hash no cambió; delete+insert/upload si cambió).
+- `sincronizar_documentos(carpeta="")` — sincroniza una carpeta entera por hash (added/
+  modified/removed) y crea snapshot.
+- `historico_documento(ruta)` / `estado_documentos()` — histórico y estado del versionado.
+- `estado_rag()` — salud de LightRAG + backend de storage activo. Llámalo primero si algo falla.
+- `verificar_alineacion()` / `reconciliar(aplicar=False)` — solo perfil híbrido: comprueba y
+  repara la alineación Neo4j⇄Postgres.
+
+Modos: `mix` (recomendado), `hybrid`, `local` (entidades), `global` (temas), `naive` (vectores).
+
+## Herramientas del servidor `myrmion-codebase` (código)
+
+Para preguntas sobre el código del usuario (impacto, dependencias, qué es reutilizable/muerto):
+
+- `indexar_codebase(ruta="", incremental=False)` — indexa/reindexa.
+- `dependencias_de(simbolo, profundidad=1)` — de qué depende.
+- `quien_llama_a(simbolo, profundidad=1)` — quién lo llama.
+- `a_que_afecta(simbolo, profundidad=5)` — **blast radius** si se cambia.
+- `inventario(filtro="")`, `codigo_muerto()`, `arquitectura()` — inventario y visión global.
+- `cambios_desde(git_ref)`, `historico(simbolo)`, `estado_indexado()`.
+- `anotar_simbolo(simbolo, etiqueta, nota="")` — fija mandatory/reusable/keep/deprecated.
+- `sincronizar_codigo(rutas, durable=False)` — sync incremental tras editar.
+
+Cada resultado incluye la **confianza** de las aristas (`exact`/`heuristic`/`unresolved`):
+pondérala; no asumas que una llamada `heuristic`/`unresolved` es fiable al 100%.
+
+## Mantenimiento OBLIGATORIO del codebase_inventory
+
+- **Antes** de un cambio de impacto, consulta `a_que_afecta` / `quien_llama_a` para conocer
+  el blast radius.
+- **Después** de editar código, llama a `sincronizar_codigo([rutas_editadas])` para
+  mantener el inventario al día.
+- El inventario **durable** refleja solo `main`. El hook `PostToolUse`
+  (`hooks/sync_on_edit.sh`) mantiene el overlay de sesión; el **git `pre-push` hook**
+  (`hooks/pre-push`) reconcilia el inventario canónico al hacer push a `main` y **aborta el
+  push** si no queda consistente — ese paso NO se puede saltar.
 
 ## Puesta en marcha
 
 ```bash
-# 1. Modelos locales (una vez)
-ollama pull qwen2.5:7b
-ollama pull nomic-embed-text
-
-# 2. Servidor LightRAG (déjalo corriendo en otra terminal)
-uv tool install "lightrag-hku[api]"   # o: pip install "lightrag-hku[api]"
-cp lightrag.env.example .env
-lightrag-server
-
-# 3. Indexar documentos (carpeta ./documentos o con el script)
-python ingest.py ./documentos
-
-# 4. Entorno del servidor MCP
-./setup.sh    # crea venv, instala deps y rellena las rutas de .mcp.json
+ollama pull qwen2.5:7b nomic-embed-text
+./setup.sh                              # venv, config/, 2 servidores MCP, hook
+# edita config/lightrag.env y config/codebase.env; re-ejecuta ./setup.sh
+lightrag-server                         # otra terminal (documentos)
+python ingest.py "$INPUT_DIR" --api-key "$LIGHTRAG_API_KEY" --watch
 ```
 
-El `.mcp.json` de la raíz hace que Claude Code descubra el servidor al abrir
-este proyecto. Verifica con `/mcp` que `graphrag-local` aparece conectado.
+Config personal en `config/` (gitignored); en la raíz solo enlaces `.env` y `.mcp.json`.
+Verifica con `/mcp` que aparecen **`myrmion-graphrag`** y **`myrmion-codebase`**.
 
 ## Notas
 
-- El indexado es la única fase pesada y es de una vez (puede ir de noche). Las
-  consultas son baratas porque el razonamiento lo haces tú, no el modelo local.
-- Servidor LightRAG por defecto en `http://localhost:9621` (Web UI en `/webui`,
-  Swagger en `/docs`).
+- Backends de storage seleccionables por perfil (filesystem/neo4j/postgres/híbrido); ver
+  README. `estado_rag` reporta el backend activo. Cambiar de backend exige re-indexar.
+- El inventario de código usa el mismo trío que LightRAG: `filesystem` (JSON local, por
+  defecto), `neo4j` o `postgres`.
+- Tests: `pip install -r requirements-dev.txt && python -m pytest` (cobertura mínima 80%).
 - No edites `rag_storage/` a mano; lo gestiona LightRAG.

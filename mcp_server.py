@@ -3,9 +3,12 @@
 Servidor MCP puente entre Claude Code y un servidor LightRAG local.
 
 No reimplementa el GraphRAG: se limita a exponer, mediante el protocolo MCP,
-tres herramientas que hablan con la API REST de LightRAG (por defecto en
+herramientas que hablan con la API REST de LightRAG (por defecto en
 http://localhost:9621). Toda la inteligencia (grafo de conocimiento, vectores,
 modelos) vive en LightRAG + Ollama; este fichero es solo el "mostrador".
+
+La lógica HTTP vive en la clase fina `LightRAGClient` (inyectable y testeable);
+las herramientas `@mcp.tool()` son wrappers delgados sobre un cliente por defecto.
 
 Variables de entorno (todas opcionales menos donde se indique):
   LIGHTRAG_BASE_URL   URL del servidor LightRAG (def. http://localhost:9621)
@@ -14,38 +17,263 @@ Variables de entorno (todas opcionales menos donde se indique):
   LIGHTRAG_TIMEOUT    Segundos de timeout HTTP (def. 120; el grafo puede tardar)
 """
 
+import hashlib
+import json
 import os
+import pathlib
+
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-BASE_URL = os.environ.get("LIGHTRAG_BASE_URL", "http://localhost:9621").rstrip("/")
-API_KEY = os.environ.get("LIGHTRAG_API_KEY", "").strip()
-DEFAULT_MODE = os.environ.get("LIGHTRAG_MODE", "mix")
-TIMEOUT = float(os.environ.get("LIGHTRAG_TIMEOUT", "120"))
-
 VALID_MODES = {"mix", "hybrid", "local", "global", "naive"}
 
-mcp = FastMCP("graphrag-local")
+
+class LightRAGClient:
+    """Cliente HTTP fino contra la API REST de LightRAG.
+
+    Encapsula toda la I/O para que las herramientas MCP queden como wrappers
+    delgados y para poder testear cada caso (OK, timeouts, errores) con mocks.
+    """
+
+    def __init__(self, base_url, api_key="", default_mode="mix", timeout=120.0):
+        self.base_url = str(base_url).rstrip("/")
+        self.api_key = (api_key or "").strip()
+        self.default_mode = default_mode if default_mode in VALID_MODES else "mix"
+        self.timeout = float(timeout)
+
+    # --- primitivas HTTP ---------------------------------------------------
+    def _headers(self) -> dict:
+        h = {"Content-Type": "application/json"}
+        if self.api_key:
+            # LightRAG acepta la clave por cabecera X-API-Key
+            h["X-API-Key"] = self.api_key
+        return h
+
+    def _post(self, path: str, payload: dict, timeout=None) -> httpx.Response:
+        with httpx.Client(timeout=timeout or self.timeout) as client:
+            return client.post(
+                f"{self.base_url}{path}", json=payload, headers=self._headers()
+            )
+
+    def _get(self, path: str, timeout=None) -> httpx.Response:
+        with httpx.Client(timeout=timeout or self.timeout) as client:
+            return client.get(f"{self.base_url}{path}", headers=self._headers())
+
+    # --- operaciones de alto nivel (devuelven texto legible) ---------------
+    def query(self, consulta, modo=None, solo_contexto=True, top_k=40) -> str:
+        modo = modo if modo in VALID_MODES else self.default_mode
+        payload = {
+            "query": consulta,
+            "mode": modo,
+            "only_need_context": bool(solo_contexto),
+            "top_k": int(top_k),
+        }
+        try:
+            r = self._post("/query", payload)
+        except httpx.ConnectError:
+            return (
+                f"No pude conectar con LightRAG en {self.base_url}. "
+                "Comprueba que el servidor esta arrancado (lightrag-server) "
+                "y que el puerto es correcto."
+            )
+        except httpx.TimeoutException:
+            return (
+                "La consulta supero el timeout. Con modelos locales pequenos "
+                "esto puede pasar; sube LIGHTRAG_TIMEOUT o usa un modo mas ligero "
+                "como 'local' o 'naive'."
+            )
+        if r.status_code != 200:
+            return f"LightRAG devolvio HTTP {r.status_code}: {r.text[:500]}"
+
+        data = r.json()
+        # La API devuelve {"response": "..."} en versiones recientes; toleramos variantes.
+        if isinstance(data, dict):
+            for key in ("response", "data", "context", "result"):
+                if key in data and data[key]:
+                    return str(data[key])
+            return str(data)
+        return str(data)
+
+    def add_text(self, texto, descripcion="") -> str:
+        payload = {"text": texto}
+        if descripcion:
+            payload["description"] = descripcion
+        try:
+            r = self._post("/documents/text", payload)
+        except httpx.ConnectError:
+            return f"No pude conectar con LightRAG en {self.base_url}."
+        if r.status_code not in (200, 201, 202):
+            return f"LightRAG devolvio HTTP {r.status_code}: {r.text[:500]}"
+        return (
+            "Documento aceptado. LightRAG lo esta indexando en segundo plano "
+            "(extrayendo entidades y relaciones). Tardara unos segundos o minutos "
+            "segun el tamano y el modelo local."
+        )
+
+    def health(self) -> str:
+        try:
+            r = self._get("/health", timeout=15)
+        except httpx.ConnectError:
+            return (
+                f"SIN CONEXION con {self.base_url}. El servidor LightRAG no responde. "
+                "Arrancalo con 'lightrag-server' y vuelve a intentarlo."
+            )
+        if r.status_code != 200:
+            return f"LightRAG respondio pero con HTTP {r.status_code}: {r.text[:300]}"
+
+        backend = ""
+        try:
+            data = r.json()
+            if isinstance(data, dict):
+                from backends import parse_health_config
+
+                storages = parse_health_config(data)
+                if storages:
+                    backend = ", ".join(f"{k}={v}" for k, v in sorted(storages.items()))
+        except Exception:
+            backend = ""
+
+        cabecera = f"LightRAG OK en {self.base_url}."
+        if backend:
+            cabecera += f" Backend activo: {backend}."
+        return f"{cabecera} Detalle: {r.text[:800]}"
+
+    # --- sincronización idempotente de documentos --------------------------
+    def find_doc_by_path(self, ruta) -> str | None:
+        """Devuelve el doc_id cuyo file_path coincide (por basename) con `ruta`, o None."""
+        base = pathlib.Path(str(ruta)).name.lower()
+        try:
+            r = self._get("/documents")
+        except httpx.ConnectError:
+            return None
+        if r.status_code != 200:
+            return None
+        try:
+            data = r.json()
+        except Exception:
+            return None
+        statuses = data.get("statuses") if isinstance(data, dict) else None
+        if not isinstance(statuses, dict):
+            return None
+        for docs in statuses.values():
+            if not isinstance(docs, list):
+                continue
+            for doc in docs:
+                if not isinstance(doc, dict):
+                    continue
+                fp = doc.get("file_path") or doc.get("file_source") or ""
+                if pathlib.Path(str(fp)).name.lower() == base:
+                    return doc.get("id") or doc.get("doc_id")
+        return None
+
+    def delete_document(self, doc_id) -> httpx.Response:
+        return self._post("/documents/delete_document", {"doc_ids": [doc_id]})
+
+    def upload_file(self, path) -> httpx.Response:
+        """Sube un fichero por multipart (/documents/upload); LightRAG lo parsea (pdf/docx/...)."""
+        p = pathlib.Path(path)
+        headers = {"X-API-Key": self.api_key} if self.api_key else {}
+        with open(p, "rb") as fh, httpx.Client(timeout=self.timeout) as client:
+            return client.post(
+                f"{self.base_url}/documents/upload",
+                files={"file": (p.name, fh)}, headers=headers,
+            )
+
+    def upsert_file(self, path) -> str:
+        """Actualiza un fichero (binario o texto) SIN duplicar: borra la version previa por su
+        basename y re-sube el fichero por multipart."""
+        try:
+            doc_id = self.find_doc_by_path(path)
+            if doc_id:
+                self.delete_document(doc_id)
+            r = self.upload_file(path)
+        except httpx.ConnectError:
+            return f"No pude conectar con LightRAG en {self.base_url}."
+        except httpx.TimeoutException:
+            return "La subida del documento supero el timeout; reintentalo."
+        except OSError as e:
+            return f"No pude leer el fichero {path}: {type(e).__name__}."
+        if r.status_code not in (200, 201, 202):
+            return f"LightRAG devolvio HTTP {r.status_code}: {r.text[:300]}"
+        accion = "reemplazado" if doc_id else "subido"
+        return f"Documento {accion} sin duplicar ({pathlib.Path(path).name})."
+
+    def upsert_document(self, ruta, texto) -> str:
+        """Actualiza un documento SIN duplicar: borra la versión previa (si existe)
+        por su ruta y reinserta el texto con file_source=ruta.
+
+        LightRAG deduplica por nombre de fichero y ARCHIVA los duplicados en vez de
+        actualizar, así que la única vía de "update" es delete + insert.
+        """
+        try:
+            doc_id = self.find_doc_by_path(ruta)
+            if doc_id:
+                self.delete_document(doc_id)
+            r = self._post(
+                "/documents/text", {"text": texto, "file_source": str(ruta)}
+            )
+        except httpx.ConnectError:
+            return f"No pude conectar con LightRAG en {self.base_url}."
+        except httpx.TimeoutException:
+            return "La sincronizacion del documento supero el timeout; reintentalo."
+        if r.status_code not in (200, 201, 202):
+            return f"LightRAG devolvio HTTP {r.status_code}: {r.text[:500]}"
+        accion = "reemplazado" if doc_id else "insertado"
+        return f"Documento {accion} sin duplicar (file_source={ruta}). Reindexando en 2o plano."
 
 
-def _headers() -> dict:
-    h = {"Content-Type": "application/json"}
-    if API_KEY:
-        # LightRAG acepta la clave por cabecera X-API-Key
-        h["X-API-Key"] = API_KEY
-    return h
+def _default_client() -> LightRAGClient:
+    return LightRAGClient(
+        base_url=os.environ.get("LIGHTRAG_BASE_URL", "http://localhost:9621"),
+        api_key=os.environ.get("LIGHTRAG_API_KEY", ""),
+        default_mode=os.environ.get("LIGHTRAG_MODE", "mix"),
+        timeout=float(os.environ.get("LIGHTRAG_TIMEOUT", "120")),
+    )
 
 
-def _post(path: str, payload: dict) -> httpx.Response:
-    url = f"{BASE_URL}{path}"
-    with httpx.Client(timeout=TIMEOUT) as client:
-        return client.post(url, json=payload, headers=_headers())
+def _docs_ledger_path() -> str:
+    """Ruta del ledger de versionado de documentos (JSON local, gitignored en config/)."""
+    return os.environ.get("DOCS_LEDGER", "config/docs.json")
+
+
+def _input_dir() -> str:
+    return os.environ.get("INPUT_DIR", "documentos")
+
+
+def _msg_ok(msg: str) -> bool:
+    """True si el mensaje de un upsert/add indica éxito (no error de red/HTTP)."""
+    return "sin duplicar" in msg or "aceptado" in msg
+
+
+def _dup_basenames(paths) -> list:
+    """Basenames que aparecen en más de una ruta (la identidad de LightRAG es por basename)."""
+    seen, dup = set(), set()
+    for p in paths:
+        name = pathlib.Path(str(p)).name
+        (dup if name in seen else seen).add(name)
+    return sorted(dup)
+
+
+def _delete_ok(client, name) -> bool:
+    """Borra en LightRAG el doc con ese basename. Ok si no existe (ya borrado) o si el
+    borrado responde 2xx."""
+    try:
+        did = client.find_doc_by_path(name)
+        if not did:
+            return True
+        r = client.delete_document(did)
+        return r.status_code in (200, 201, 202)
+    except httpx.HTTPError:
+        return False
+
+
+mcp = FastMCP("myrmion-graphrag")
 
 
 @mcp.tool()
 def buscar_conocimiento(
     consulta: str,
-    modo: str = DEFAULT_MODE,
+    modo: str = "mix",
     solo_contexto: bool = True,
     top_k: int = 40,
 ) -> str:
@@ -68,38 +296,7 @@ def buscar_conocimiento(
     Returns:
         El contexto recuperado o la respuesta generada, como texto.
     """
-    modo = modo if modo in VALID_MODES else DEFAULT_MODE
-    payload = {
-        "query": consulta,
-        "mode": modo,
-        "only_need_context": bool(solo_contexto),
-        "top_k": int(top_k),
-    }
-    try:
-        r = _post("/query", payload)
-    except httpx.ConnectError:
-        return (
-            f"No pude conectar con LightRAG en {BASE_URL}. "
-            "Comprueba que el servidor esta arrancado (lightrag-server) "
-            "y que el puerto es correcto."
-        )
-    except httpx.TimeoutException:
-        return (
-            "La consulta supero el timeout. Con modelos locales pequenos "
-            "esto puede pasar; sube LIGHTRAG_TIMEOUT o usa un modo mas ligero "
-            "como 'local' o 'naive'."
-        )
-    if r.status_code != 200:
-        return f"LightRAG devolvio HTTP {r.status_code}: {r.text[:500]}"
-
-    data = r.json()
-    # La API devuelve {"response": "..."} en versiones recientes; toleramos variantes.
-    if isinstance(data, dict):
-        for key in ("response", "data", "context", "result"):
-            if key in data and data[key]:
-                return str(data[key])
-        return str(data)
-    return str(data)
+    return _default_client().query(consulta, modo, solo_contexto, top_k)
 
 
 @mcp.tool()
@@ -114,40 +311,195 @@ def anadir_documento(texto: str, descripcion: str = "") -> str:
         texto: El contenido a indexar.
         descripcion: Etiqueta o titulo opcional para identificar el documento.
     """
-    payload = {"text": texto}
-    if descripcion:
-        payload["description"] = descripcion
+    return _default_client().add_text(texto, descripcion)
+
+
+@mcp.tool()
+def sincronizar_documento(ruta: str, texto: str = "") -> str:
+    """Actualiza un documento tras editarlo, SIN duplicar y VERSIONANDO el cambio.
+
+    Compara el HASH de contenido con el registrado en el ledger: si no cambió, NO reindexa
+    (no-op barato); si cambió, borra la version anterior en LightRAG y reinserta la nueva
+    (delete + insert, la unica via de "update" soportada, ya que LightRAG deduplica por
+    nombre y archiva los duplicados). Registra el cambio en el histórico.
+
+    Args:
+        ruta: Ruta del fichero (su basename es la clave de deduplicacion/versionado).
+        texto: Contenido nuevo. Si se omite, se lee del fichero en `ruta`.
+    """
+    import doc_ledger
+    from codebase_mcp import gitutil
+
+    client = _default_client()
+    ledger_path = _docs_ledger_path()
+    ledger = doc_ledger.load(ledger_path)
+
+    if texto:
+        chash = doc_ledger.content_hash(texto)
+        if doc_ledger.doc_hash(ledger, ruta) == chash:
+            return f"'{pathlib.Path(ruta).name}' sin cambios (mismo hash); no se reindexa."
+        msg = client.upsert_document(ruta, texto)
+    else:
+        p = pathlib.Path(ruta)
+        if not p.exists():
+            return f"No existe el fichero {ruta}."
+        chash = doc_ledger.file_hash(ruta)  # por bytes: sirve para binarios (pdf/docx)
+        if doc_ledger.doc_hash(ledger, ruta) == chash:
+            return f"'{p.name}' sin cambios (mismo hash); no se reindexa."
+        msg = client.upsert_file(ruta)  # multipart: LightRAG parsea el fichero
+
+    # Solo se versiona si LightRAG aceptó el cambio (si no, el ledger no avanza -> reintenta).
+    if _msg_ok(msg):
+        doc_ledger.record_one(ledger, ruta, chash,
+                              sha=gitutil.current_sha("."), branch=gitutil.current_branch("."))
+        doc_ledger.save(ledger, ledger_path)
+    return msg
+
+
+@mcp.tool()
+def sincronizar_documentos(carpeta: str = "") -> str:
+    """Sincroniza TODA una carpeta de documentos con LightRAG y versiona los cambios.
+
+    Detecta added/modified/removed por HASH de contenido (no por nombre): solo reindexa lo
+    que cambió (sin duplicar), borra en LightRAG lo que ya no existe, y crea un snapshot del
+    estado (etiquetado con el commit git si lo hay).
+
+    Args:
+        carpeta: Carpeta a sincronizar. Si se omite, usa INPUT_DIR.
+    """
+    import doc_ledger
+    import ingest
+    from codebase_mcp import gitutil
+
+    carpeta = carpeta or _input_dir()
     try:
-        r = _post("/documents/text", payload)
-    except httpx.ConnectError:
-        return f"No pude conectar con LightRAG en {BASE_URL}."
-    if r.status_code not in (200, 201, 202):
-        return f"LightRAG devolvio HTTP {r.status_code}: {r.text[:500]}"
-    return (
-        "Documento aceptado. LightRAG lo esta indexando en segundo plano "
-        "(extrayendo entidades y relaciones). Tardara unos segundos o minutos "
-        "segun el tamano y el modelo local."
-    )
+        ficheros, _ = ingest.descubrir_ficheros(carpeta, excluir=True)
+    except Exception as e:  # noqa: BLE001
+        return f"No pude explorar {carpeta}: {type(e).__name__}: {e}"
+
+    by_name, docs = {}, {}
+    for p in ficheros:
+        try:
+            docs[str(p)] = doc_ledger.file_hash(p)  # por bytes (sirve para binarios)
+        except OSError:
+            continue
+        by_name[pathlib.Path(p).name] = str(p)
+
+    ledger_path = _docs_ledger_path()
+    ledger = doc_ledger.load(ledger_path)
+    diffs = doc_ledger.diff_batch(ledger, docs)  # calcula SIN mutar
+
+    client = _default_client()
+    aplicados = {"added": 0, "modified": 0, "removed": 0, "errores": 0}
+    applied = []
+    for entry in diffs:
+        nid, change, _detail = entry
+        name = nid.split(":", 1)[1]
+        if change in ("added", "modified"):
+            path = by_name.get(name)
+            if path and _msg_ok(client.upsert_file(path)):
+                applied.append(entry)
+                aplicados[change] += 1
+            else:
+                aplicados["errores"] += 1
+        elif change == "removed":
+            if _delete_ok(client, name):
+                applied.append(entry)
+                aplicados["removed"] += 1
+            else:
+                aplicados["errores"] += 1
+
+    # Versiona SOLO lo que se aplicó con éxito (lo fallido no avanza -> se reintenta).
+    doc_ledger.commit(ledger, docs, applied, sha=gitutil.current_sha(carpeta),
+                      branch=gitutil.current_branch(carpeta))
+    doc_ledger.save(ledger, ledger_path)
+    result = {"ficheros": len(ficheros), "cambios": doc_ledger.summary(applied),
+              "aplicados": aplicados}
+    dups = _dup_basenames(ficheros)
+    if dups:
+        result["aviso"] = f"basenames duplicados (LightRAG deduplica por nombre): {dups}"
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def historico_documento(ruta: str) -> str:
+    """Evolución versionada de un documento (added/modified/removed por snapshot/commit).
+
+    Args:
+        ruta: Ruta o nombre del documento.
+    """
+    import doc_ledger
+
+    ledger = doc_ledger.load(_docs_ledger_path())
+    recs = doc_ledger.history_of(ledger, ruta)
+    return json.dumps([{"snapshot": r.snapshot_id, "cambio": r.change, "detalle": r.detail}
+                       for r in recs], ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def estado_documentos() -> str:
+    """Estado del versionado de documentos: nº de documentos rastreados y último snapshot."""
+    import doc_ledger
+
+    ledger = doc_ledger.load(_docs_ledger_path())
+    snap = ledger.latest_snapshot()
+    docs = [n.qualified_name for n in ledger.all_nodes() if n.kind == "Document"]
+    return json.dumps({"documentos": len(docs),
+                       "ultimo_snapshot": snap.__dict__ if snap else None},
+                      ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
 def estado_rag() -> str:
     """Comprueba si el servidor LightRAG esta vivo y responde.
 
-    Devuelve el estado de salud y, si esta disponible, la configuracion activa
-    (modelos, pipeline). Util como primera llamada para diagnosticar la conexion.
+    Devuelve el estado de salud y, si esta disponible, el backend de almacenamiento
+    activo (filesystem / Neo4j / PostgreSQL) y la configuracion. Util como primera
+    llamada para diagnosticar la conexion.
+    """
+    return _default_client().health()
+
+
+@mcp.tool()
+def verificar_alineacion() -> str:
+    """Comprueba que Neo4j (grafo) y Postgres (vectores) del perfil HÍBRIDO estén alineados.
+
+    Solo aplica al backend híbrido. Reporta la deriva (docs sin grafo/sin vectores, huérfanos)
+    sin modificar nada. Usa `reconciliar` para repararla.
     """
     try:
-        with httpx.Client(timeout=15) as client:
-            r = client.get(f"{BASE_URL}/health", headers=_headers())
-    except httpx.ConnectError:
-        return (
-            f"SIN CONEXION con {BASE_URL}. El servidor LightRAG no responde. "
-            "Arrancalo con 'lightrag-server' y vuelve a intentarlo."
-        )
-    if r.status_code != 200:
-        return f"LightRAG respondio pero con HTTP {r.status_code}: {r.text[:300]}"
-    return f"LightRAG OK en {BASE_URL}. Detalle: {r.text[:800]}"
+        from consistency_readers import build_supervisor  # pragma: no cover
+    except Exception as e:  # noqa: BLE001
+        return f"No pude preparar la verificacion: {type(e).__name__}: {e}"
+    try:
+        sup = build_supervisor()  # pragma: no cover
+        return str(sup.reconcile(apply=False))  # pragma: no cover
+    except Exception as e:  # noqa: BLE001
+        return f"Verificacion no disponible: {type(e).__name__}: {e}"
+
+
+@mcp.tool()
+def reconciliar(aplicar: bool = False) -> str:
+    """Reconcilia Neo4j y Postgres del perfil HÍBRIDO (saga + reparación auto).
+
+    Args:
+        aplicar: Si False (por defecto) es un dry-run que solo reporta el plan. Si True,
+            ejecuta la reparación (reindexar docs con deriva, borrar huérfanos).
+    """
+    try:
+        from consistency_readers import build_supervisor  # pragma: no cover
+    except Exception as e:  # noqa: BLE001
+        return f"No pude preparar la reconciliacion: {type(e).__name__}: {e}"
+    try:
+        sup = build_supervisor()  # pragma: no cover
+        return str(sup.reconcile(apply=bool(aplicar)))  # pragma: no cover
+    except Exception as e:  # noqa: BLE001
+        return f"Reconciliacion no disponible: {type(e).__name__}: {e}"
+
+
+# Hash de contenido reutilizable por herramientas de sincronización externas.
+def content_md5(texto: str) -> str:
+    return hashlib.md5(texto.encode("utf-8", errors="replace")).hexdigest()
 
 
 if __name__ == "__main__":

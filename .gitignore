@@ -4,8 +4,14 @@ __pycache__/
 *.pyc
 .Python
 
-# Configuracion local con secretos / rutas de maquina
+# === CONFIGURACION PERSONAL (NUNCA al repo) ==========================
+# Toda tu config real (rutas absolutas, API key, modelos) vive en config/.
+# En la raiz solo quedan enlaces simbolicos que los tools exigen ahi.
+# Se versionan SOLO las plantillas: lightrag.env.example y .mcp.json.example
+config/
 .env
+.mcp.json
+# =====================================================================
 
 # Almacenamiento generado por LightRAG (grafo, vectores, estado)
 rag_storage/
@@ -14,9 +20,21 @@ rag_storage/
 documentos/*
 !documentos/.gitkeep
 
-# .mcp.json generado con rutas absolutas de la maquina.
-# Descomenta si NO quieres versionarlo (recomendado en repos compartidos):
-# .mcp.json
+# Scripts locales de arranque (cada maquina el suyo, no se versionan)
+ollama-serve.sh
+rag-up.sh
+db-up.sh
+migrate-backend.sh
+
+# Datos de volumenes docker locales
+pgdata/
+neo4j/
+
+# Artefactos de test/cobertura
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # Sistema
 .DS_Store

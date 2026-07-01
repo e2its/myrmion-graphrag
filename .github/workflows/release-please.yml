@@ -1,0 +1,21 @@
+name: release-please
+
+# Automatiza las releases a partir de commits convencionales (feat:/fix:/...).
+# En cada push a main, release-please abre/actualiza un "release PR" con el CHANGELOG
+# y la versión calculada. Al mergear ese PR, crea el tag vX.Y.Z y la GitHub Release.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

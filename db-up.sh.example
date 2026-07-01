@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Arranque a demanda de los backends profesionales (Neo4j / Postgres) via docker compose.
+# LOCAL: './setup.sh' copia esta plantilla a db-up.sh (gitignored) y lo hace ejecutable.
+#   ./db-up.sh neo4j     start|status|stop|logs
+#   ./db-up.sh postgres  start|status|stop|logs
+#   ./db-up.sh pro       start|status|stop|logs     # HIBRIDO: neo4j + postgres a la vez
+set -euo pipefail
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_DIR"
+PY="$REPO_DIR/venv/bin/python"
+BACKEND="${1:-neo4j}"
+ACTION="${2:-start}"
+
+profiles() {
+  case "$1" in
+    pro)      echo "--profile neo4j --profile postgres" ;;
+    *)        echo "--profile $1" ;;
+  esac
+}
+P="$(profiles "$BACKEND")"
+
+case "$ACTION" in
+  start)
+    # shellcheck disable=SC2086
+    docker compose $P up -d
+    echo "==> Validando conexion (no bloqueante)"
+    case "$BACKEND" in
+      neo4j)    "$PY" -m backends healthcheck neo4j || true ;;
+      postgres) "$PY" -m backends healthcheck postgres || true ;;
+      pro)      "$PY" -m backends healthcheck neo4j || true
+                "$PY" -m backends healthcheck postgres || true ;;
+    esac ;;
+  status) docker compose $P ps ;;
+  stop)   docker compose $P down ;;
+  logs)   docker compose $P logs -f ;;
+  *)      echo "Uso: ./db-up.sh {neo4j|postgres|pro} {start|status|stop|logs}" ; exit 2 ;;
+esac

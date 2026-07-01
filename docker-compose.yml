@@ -1,0 +1,56 @@
+# Infra OPCIONAL para los backends profesionales de LightRAG (y del grafo de codigo).
+# Los secretos NO viven aqui: se leen de config/lightrag.env (gitignored) via env_file y
+# de .env (symlink -> config/lightrag.env) para la interpolacion ${...} de Compose.
+# Uso recomendado a traves de ./db-up.sh:
+#   docker compose --profile neo4j    up -d
+#   docker compose --profile postgres up -d
+#   docker compose --profile neo4j --profile postgres up -d    # perfil HIBRIDO (pro)
+services:
+  neo4j:
+    profiles: ["neo4j"]
+    image: neo4j:5.26-community
+    container_name: graphrag-neo4j
+    env_file: [config/lightrag.env]
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:?define NEO4J_PASSWORD en config/lightrag.env}"
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512M
+    ports:
+      - "127.0.0.1:7474:7474"   # Browser / HTTP
+      - "127.0.0.1:7687:7687"   # Bolt (lo usa LightRAG)
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$NEO4J_PASSWORD\" 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  postgres:
+    profiles: ["postgres"]
+    image: gzdaniel/postgres-for-rag:pg18-age-pgvector
+    container_name: graphrag-postgres
+    env_file: [config/lightrag.env]
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-rag}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD en config/lightrag.env}"
+      POSTGRES_DB: "${POSTGRES_DATABASE:-lightrag}"
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"${POSTGRES_USER:-rag}\" -d \"${POSTGRES_DATABASE:-lightrag}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  pg_data:

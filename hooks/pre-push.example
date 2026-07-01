@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# GATE NO EVITABLE del codebase_inventory (git pre-push sobre la rama principal).
+# './setup.sh' activa este hook vía  git config core.hooksPath hooks/  (renómbralo a
+# 'pre-push' o deja que setup.sh lo copie). Al hacer push a main, reconcilia el inventario
+# canónico con el diff; si no puede dejarlo consistente, ABORTA el push (exit != 0).
+set -euo pipefail
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="$REPO_DIR/venv/bin/python"
+MAIN="refs/heads/main"
+ZERO="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "$MAIN" ] || continue
+  if [ "$remote_sha" = "$ZERO" ]; then
+    files="$(git -C "$REPO_DIR" diff --name-only "$(git hash-object -t tree /dev/null)" "$local_sha" || true)"
+  else
+    files="$(git -C "$REPO_DIR" diff --name-only "$remote_sha" "$local_sha" || true)"
+  fi
+  [ -n "$files" ] || continue
+  echo "[pre-push] Reconciliando codebase_inventory (main)..."
+  # shellcheck disable=SC2086
+  if ! "$PY" -m codebase_mcp.sync --durable $files; then
+    echo "[pre-push] ABORTADO: no pude reconciliar el inventario. Corrige y reintenta." >&2
+    exit 1
+  fi
+done
+exit 0

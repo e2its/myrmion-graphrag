@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myrmion-graphrag"
+version = "0.2.0"
+description = "myrmion-graphRAG: GraphRAG 100% local (LightRAG + Ollama) + servidor MCP de codebase, expuestos a Claude Code"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "MIT" }
+
+# Las dependencias reales viven en los requirements-*.txt (política de deps mínimas
+# por servicio). Este pyproject existe sobre todo para configurar pytest y coverage.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Cobertura del código propio (no del venv). -m "not integration" excluye por defecto
+# los tests que requieren Neo4j/Postgres/Ollama reales.
+addopts = "-m 'not integration' --cov --cov-report=term-missing"
+markers = [
+    "integration: requiere servicios externos reales (Neo4j/Postgres/Ollama); excluido por defecto",
+]
+
+[tool.coverage.run]
+branch = true
+source = [
+    "mcp_server",
+    "ingest",
+    "backends",
+    "codebase_mcp",
+    "codebase_server",
+]
+omit = [
+    "venv/*",
+    "*/site-packages/*",
+    "tests/*",
+    # Backends de BD del grafo de código: se prueban con tests de integración
+    # (marcados) y con driver mockeado; fuera del gate de cobertura por defecto.
+    "codebase_mcp/graph/neo4j_store.py",
+    "codebase_mcp/graph/postgres_store.py",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "def main\\(",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
