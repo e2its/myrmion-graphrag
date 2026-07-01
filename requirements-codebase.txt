@@ -1,0 +1,7 @@
+# Dependencias del servidor MCP de codebase (codebase_server.py + paquete codebase_mcp/).
+# El backend por defecto del grafo de código es Neo4j; el InMemoryGraphStore no
+# necesita nada (stdlib). Postgres es un extra opcional (requirements-backends.txt).
+mcp>=1.28
+tree-sitter>=0.23
+tree-sitter-language-pack>=1.11
+neo4j>=5

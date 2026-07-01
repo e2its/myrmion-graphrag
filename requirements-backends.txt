@@ -1,0 +1,5 @@
+# Drivers de bases de datos profesionales (solo si usas Neo4j/PostgreSQL como backend).
+# Se importan de forma perezosa: el flujo local (filesystem / InMemoryGraphStore) no
+# los necesita. Instálalos aparte:  pip install -r requirements-backends.txt
+neo4j>=5
+psycopg[binary]>=3.1

@@ -23,6 +23,18 @@ documentos/*
 # Scripts locales de arranque (cada maquina el suyo, no se versionan)
 ollama-serve.sh
 rag-up.sh
+db-up.sh
+migrate-backend.sh
+
+# Datos de volumenes docker locales
+pgdata/
+neo4j/
+
+# Artefactos de test/cobertura
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # Sistema
 .DS_Store

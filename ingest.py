@@ -39,6 +39,25 @@ EXCLUDE_DIRS = {
 }
 
 
+def descubrir_ficheros(raiz, excluir=True):
+    """Descubre ficheros indexables bajo `raiz` (recursivo).
+
+    Filtra por extensión (`EXTS`) y, si `excluir`, omite los que caen en directorios de
+    dependencias/build/VCS (`EXCLUDE_DIRS`). Devuelve `(ficheros_ordenados, n_omitidos)`.
+    Lógica pura (sin red) para poder testearla directamente.
+    """
+    raiz = pathlib.Path(raiz)
+    candidatos = [p for p in raiz.rglob("*")
+                  if p.is_file() and p.suffix.lower() in EXTS]
+    if not excluir:
+        return sorted(candidatos), 0
+    ficheros = sorted(
+        p for p in candidatos
+        if not any(parte in EXCLUDE_DIRS for parte in p.relative_to(raiz).parts)
+    )
+    return ficheros, len(candidatos) - len(ficheros)
+
+
 def fmt_size(n):
     for unidad in ("B", "KB", "MB", "GB"):
         if n < 1024 or unidad == "GB":
@@ -143,16 +162,7 @@ def main():
     if not raiz.is_dir():
         sys.exit(f"No existe la carpeta: {raiz}")
 
-    candidatos = [p for p in raiz.rglob("*")
-                  if p.is_file() and p.suffix.lower() in EXTS]
-    if args.no_exclude:
-        ficheros, omitidos = sorted(candidatos), 0
-    else:
-        ficheros = sorted(
-            p for p in candidatos
-            if not any(parte in EXCLUDE_DIRS for parte in p.relative_to(raiz).parts)
-        )
-        omitidos = len(candidatos) - len(ficheros)
+    ficheros, omitidos = descubrir_ficheros(raiz, excluir=not args.no_exclude)
     total = len(ficheros)
     if not total:
         sys.exit("No encontre documentos con extensiones soportadas.")

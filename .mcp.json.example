@@ -1,13 +1,22 @@
 {
   "mcpServers": {
-    "graphrag-local": {
-      "command": "/RUTA/ABSOLUTA/graphrag-local/venv/bin/python",
-      "args": ["/RUTA/ABSOLUTA/graphrag-local/mcp_server.py"],
+    "myrmion-graphrag": {
+      "command": "/RUTA/ABSOLUTA/myrmion-graphRAG/venv/bin/python",
+      "args": ["/RUTA/ABSOLUTA/myrmion-graphRAG/mcp_server.py"],
       "env": {
         "LIGHTRAG_BASE_URL": "http://127.0.0.1:9621",
         "LIGHTRAG_MODE": "mix",
         "LIGHTRAG_TIMEOUT": "120",
         "LIGHTRAG_API_KEY": ""
+      }
+    },
+    "myrmion-codebase": {
+      "command": "/RUTA/ABSOLUTA/myrmion-graphRAG/venv/bin/python",
+      "args": ["/RUTA/ABSOLUTA/myrmion-graphRAG/codebase_server.py"],
+      "env": {
+        "CODEBASE_ROOT": "/RUTA/ABSOLUTA/de/tu/codebase",
+        "CODEBASE_STORAGE": "memory",
+        "CODEBASE_MEMORY_SNAPSHOT": "/RUTA/ABSOLUTA/myrmion-graphRAG/config/codebase.json"
       }
     }
   }

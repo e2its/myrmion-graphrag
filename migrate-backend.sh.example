@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Helper para migrar LightRAG de un backend de storage a otro.
+# LOCAL: './setup.sh' lo copia a migrate-backend.sh (gitignored).
+#
+# LightRAG NO migra datos entre backends: la via soportada es RE-INDEXAR limpio.
+# Este script automatiza el backup y te guia; la edicion del perfil en
+# config/lightrag.env (paso 3) es MANUAL (eliges perfil y pones credenciales).
+set -euo pipefail
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_DIR"
+
+echo "1) Parando LightRAG (si usas rag-up.sh: ./rag-up.sh stop)"
+echo "2) Levanta el backend nuevo:  ./db-up.sh {neo4j|postgres|pro} start"
+echo "3) EDITA config/lightrag.env: descomenta el PERFIL deseado + credenciales,"
+echo "   y ejecuta  ./setup.sh  (validara la conexion)."
+read -r -p "   ¿Has editado el perfil y ejecutado setup.sh? [y/N] " ans
+[ "${ans:-N}" = "y" ] || { echo "Aborto. Edita el perfil y reintenta."; exit 1; }
+
+WORKDIR="$(grep -E '^WORKING_DIR=' config/lightrag.env | head -1 | cut -d= -f2- | tr -d '"' | xargs || echo ./rag_storage)"
+if [ -d "$WORKDIR" ]; then
+  BAK="${WORKDIR%/}.bak-$(date +%Y%m%d-%H%M%S)"
+  echo "4) Respaldando estado local incompatible: $WORKDIR -> $BAK"
+  mv "$WORKDIR" "$BAK"
+  echo "   (rollback: vuelve a mover $BAK a $WORKDIR)"
+fi
+
+echo "5) Arranca LightRAG contra el nuevo backend y RE-INGIERE:"
+echo "   lightrag-server &"
+echo "   $REPO_DIR/venv/bin/python ingest.py \"\$INPUT_DIR\" --api-key \"\$LIGHTRAG_API_KEY\" --watch"
+echo "6) Verifica con la tool MCP  estado_rag  (debe reportar el nuevo backend)."
