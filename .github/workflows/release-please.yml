@@ -2,20 +2,28 @@ name: release-please
 
 # Automatiza las releases a partir de commits convencionales (feat:/fix:/...).
 # En cada push a main, release-please abre/actualiza un "release PR" con el CHANGELOG
-# y la versión calculada. Al mergear ese PR, crea el tag vX.Y.Z y la GitHub Release.
+# y la version calculada. Al mergear ese PR, crea el tag vX.Y.Z y la GitHub Release.
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
-permissions:
-  contents: write
-  pull-requests: write
+# Sin permisos por defecto: el token es de solo lectura salvo donde se conceda
+# explicitamente (principio de minimo privilegio).
+permissions: {}
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    # Unicos permisos que necesita release-please: escribir contenido (tags/commits/
+    # releases) y abrir el pull request de release.
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: googleapis/release-please-action@v4
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
