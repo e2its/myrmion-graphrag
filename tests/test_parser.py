@@ -73,10 +73,11 @@ def test_treesitter_java():
 
 
 def test_registry_by_extension():
+    from codebase_mcp.parser.vb_parser import VBParser
     assert isinstance(get_parser_for_path("a.py"), PythonAstParser)
     assert isinstance(get_parser_for_path("a.js"), TreeSitterParser)
-    assert isinstance(get_parser_for_path("a.vb"), TreeSitterParser)  # VB.NET via tree-sitter
-    from codebase_mcp.parser.vb_parser import VBParser
+    # VB.NET: tree-sitter si la gramática está; si no, fallback al parser propio.
+    assert isinstance(get_parser_for_path("a.vb"), (TreeSitterParser, VBParser))
     assert isinstance(get_parser_for_path("a.bas"), VBParser)         # VB6 con parser propio
     assert get_parser_for_path("a.unknown") is None
 

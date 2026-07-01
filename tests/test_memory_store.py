@@ -69,6 +69,24 @@ def test_search_and_find():
     assert s.find_nodes(qualified="m.helper")[0].name == "helper"
 
 
+def test_load_json_replaces_not_accumulates(tmp_path):
+    src = InMemoryGraphStore()
+    src.upsert_node(_n("Function", "m.nuevo"))
+    p = tmp_path / "g.json"
+    src.save_json(p)
+    dst = InMemoryGraphStore()
+    dst.upsert_node(_n("Function", "m.viejo"))  # store ya poblado
+    dst.load_json(p)                            # debe REEMPLAZAR, no acumular
+    assert {n.qualified_name for n in dst.all_nodes()} == {"m.nuevo"}
+
+
+def test_create_snapshot_id_survives_gaps():
+    from codebase_mcp.models import Snapshot
+    s = InMemoryGraphStore()
+    s._snapshots = [Snapshot(id=1), Snapshot(id=5)]  # ids con hueco
+    assert s.create_snapshot(Snapshot(id=0)) == 6    # max+1, no len+1
+
+
 def test_save_load_json(tmp_path):
     s = InMemoryGraphStore()
     s.upsert_node(_n("Function", "m.f"))

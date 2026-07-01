@@ -167,6 +167,24 @@ def test_versionado_documento_texto(monkeypatch, tmp_path):
 
 
 @respx.mock
+def test_versionado_no_avanza_si_falla(monkeypatch, tmp_path):
+    monkeypatch.setenv("LIGHTRAG_BASE_URL", BASE)
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "")
+    monkeypatch.setenv("DOCS_LEDGER", str(tmp_path / "docs.json"))
+    carpeta = tmp_path / "docs"
+    carpeta.mkdir()
+    (carpeta / "a.md").write_text("uno")
+    respx.get(f"{BASE}/documents").mock(return_value=httpx.Response(200, json={"statuses": {}}))
+    respx.post(f"{BASE}/documents/upload").mock(return_value=httpx.Response(500, text="boom"))
+    out = json.loads(mcp_server.sincronizar_documentos(str(carpeta)))
+    assert out["aplicados"]["errores"] == 1 and out["cambios"]["added"] == 0
+    # el ledger NO avanzó -> la próxima vez se reintenta (sigue viéndolo como 'added')
+    respx.post(f"{BASE}/documents/upload").mock(return_value=httpx.Response(200, json={}))
+    out2 = json.loads(mcp_server.sincronizar_documentos(str(carpeta)))
+    assert out2["cambios"]["added"] == 1
+
+
+@respx.mock
 def test_versionado_documentos_batch(monkeypatch, tmp_path):
     monkeypatch.setenv("LIGHTRAG_BASE_URL", BASE)
     monkeypatch.setenv("LIGHTRAG_API_KEY", "")

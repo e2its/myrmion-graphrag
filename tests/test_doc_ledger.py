@@ -41,6 +41,18 @@ def test_remove_one_and_absent():
     assert doc_ledger.doc_hash(s, "a.md") is None
 
 
+def test_diff_batch_no_muta_y_commit_parcial():
+    s = doc_ledger.load(None)
+    docs = {"a.md": "h1", "b.md": "h1"}
+    diffs = doc_ledger.diff_batch(s, docs)
+    assert len(diffs) == 2
+    assert s.all_nodes() == []  # diff_batch NO muta el store
+    applied = [d for d in diffs if d[0] == "Document:a.md"]  # solo 'a' se aplicó bien
+    doc_ledger.commit(s, docs, applied)
+    assert doc_ledger.doc_hash(s, "a.md") == "h1"
+    assert doc_ledger.doc_hash(s, "b.md") is None  # 'b' no se commiteó -> se reintentará
+
+
 def test_persist_roundtrip(tmp_path):
     p = tmp_path / "ledger.json"
     s = doc_ledger.load(p)

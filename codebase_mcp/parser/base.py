@@ -52,7 +52,18 @@ def _ensure_registry():
     reg([".java"], lambda: TreeSitterParser("java"))
     reg([".cs"], lambda: TreeSitterParser("csharp"))
     reg([".bas", ".cls", ".frm", ".vbs"], lambda: VBParser("vb6"))
-    reg([".vb"], lambda: TreeSitterParser("vbnet"))   # VB.NET via tree-sitter (grammar 'vb')
+
+    def _vbnet_factory():
+        # VB.NET via tree-sitter (grammar 'vb'); si la gramática no está disponible,
+        # cae al parser propio (dialecto vbnet), que no requiere dependencias externas.
+        try:
+            from .treesitter_parser import _get_ts_parser
+            _get_ts_parser("vbnet")
+            return TreeSitterParser("vbnet")
+        except Exception:
+            return VBParser("vbnet")
+
+    reg([".vb"], _vbnet_factory)
     reg([".asp"], lambda: AspParser())
 
 

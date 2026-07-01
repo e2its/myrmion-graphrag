@@ -9,9 +9,16 @@ from __future__ import annotations
 
 import json
 import pathlib
+from dataclasses import fields as _dc_fields
 
 from ..models import Annotation, ChangeRecord, Edge, Node, Snapshot
 from .store import GraphStore
+
+
+def _clean(cls, d):
+    """Filtra un dict a los campos conocidos del dataclass (tolera claves extra en el JSON)."""
+    names = {f.name for f in _dc_fields(cls)}
+    return {k: v for k, v in d.items() if k in names}
 
 
 class InMemoryGraphStore(GraphStore):
@@ -101,7 +108,7 @@ class InMemoryGraphStore(GraphStore):
 
     # --- historia ----------------------------------------------------------
     def create_snapshot(self, snap: Snapshot) -> int:
-        new_id = snap.id or (len(self._snapshots) + 1)
+        new_id = snap.id or (max((s.id for s in self._snapshots), default=0) + 1)
         stored = Snapshot(
             id=new_id,
             commit_sha=snap.commit_sha,
@@ -151,12 +158,15 @@ class InMemoryGraphStore(GraphStore):
         if not p.exists():
             return
         data = json.loads(p.read_text(encoding="utf-8"))
+        # reemplaza el estado (no acumula sobre lo que ya hubiera en el store)
+        self._nodes.clear()
+        self._edges.clear()
         for nd in data.get("nodes", []):
-            self.upsert_node(Node(**nd))
+            self.upsert_node(Node(**_clean(Node, nd)))
         for ed in data.get("edges", []):
-            self.upsert_edge(Edge(**ed))
+            self.upsert_edge(Edge(**_clean(Edge, ed)))
         self._annotations = {k: dict(v) for k, v in data.get("annotations", {}).items()}
         self._file_hashes = dict(data.get("file_hashes", {}))
         # snapshots y changes tambien se persisten -> el historico sobrevive a reload.
-        self._snapshots = [Snapshot(**s) for s in data.get("snapshots", [])]
-        self._changes = [ChangeRecord(**c) for c in data.get("changes", [])]
+        self._snapshots = [Snapshot(**_clean(Snapshot, s)) for s in data.get("snapshots", [])]
+        self._changes = [ChangeRecord(**_clean(ChangeRecord, c)) for c in data.get("changes", [])]

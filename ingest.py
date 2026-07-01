@@ -149,30 +149,42 @@ def _sync_batch(base, api_key, ficheros, ledger_path):
     LightRAG) y borra lo eliminado. Detecta cambios por hash de bytes (ledger), así que
     re-ejecutar NO deja que LightRAG archive el update como duplicado."""
     import doc_ledger
-    from mcp_server import LightRAGClient
+    from mcp_server import LightRAGClient, _delete_ok, _msg_ok
 
     client = LightRAGClient(base_url=base, api_key=api_key)
     ledger = doc_ledger.load(ledger_path)
     by_name = {p.name: str(p) for p in ficheros}
     docs = {str(p): doc_ledger.file_hash(p) for p in ficheros}
-    diffs = doc_ledger.record_batch(ledger, docs)
-    stats = {"nuevos": 0, "modificados": 0, "borrados": 0, "sin_cambios": len(ficheros)}
-    for nid, change, _detail in diffs:
+    diffs = doc_ledger.diff_batch(ledger, docs)  # calcula SIN mutar
+    stats = {"nuevos": 0, "modificados": 0, "borrados": 0,
+             "sin_cambios": len(ficheros), "errores": 0}
+    applied = []
+    for entry in diffs:
+        nid, change, _detail = entry
         name = nid.split(":", 1)[1]
         if change in ("added", "modified"):
-            print("  " + client.upsert_file(by_name[name]), flush=True)
-            stats["nuevos" if change == "added" else "modificados"] += 1
-            stats["sin_cambios"] -= 1
+            msg = client.upsert_file(by_name[name])
+            print("  " + msg, flush=True)
+            if _msg_ok(msg):
+                applied.append(entry)
+                stats["nuevos" if change == "added" else "modificados"] += 1
+                stats["sin_cambios"] -= 1
+            else:
+                stats["errores"] += 1
         elif change == "removed":
-            did = client.find_doc_by_path(name)
-            if did:
-                client.delete_document(did)
-            print(f"  Borrado en LightRAG (ya no existe): {name}", flush=True)
-            stats["borrados"] += 1
+            if _delete_ok(client, name):
+                applied.append(entry)
+                print(f"  Borrado en LightRAG (ya no existe): {name}", flush=True)
+                stats["borrados"] += 1
+            else:
+                stats["errores"] += 1
+    # Versiona SOLO lo aplicado con éxito (lo fallido se reintenta la próxima vez).
+    doc_ledger.commit(ledger, docs, applied)
     doc_ledger.save(ledger, ledger_path)
     print("-" * 72)
     print(f"Sync: {stats['nuevos']} nuevos, {stats['modificados']} modificados, "
-          f"{stats['borrados']} borrados, {stats['sin_cambios']} sin cambios.")
+          f"{stats['borrados']} borrados, {stats['sin_cambios']} sin cambios, "
+          f"{stats['errores']} errores.")
     return stats
 
 

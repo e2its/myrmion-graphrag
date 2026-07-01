@@ -191,6 +191,8 @@ class LightRAGClient:
             return f"No pude conectar con LightRAG en {self.base_url}."
         except httpx.TimeoutException:
             return "La subida del documento supero el timeout; reintentalo."
+        except OSError as e:
+            return f"No pude leer el fichero {path}: {type(e).__name__}."
         if r.status_code not in (200, 201, 202):
             return f"LightRAG devolvio HTTP {r.status_code}: {r.text[:300]}"
         accion = "reemplazado" if doc_id else "subido"
@@ -236,6 +238,33 @@ def _docs_ledger_path() -> str:
 
 def _input_dir() -> str:
     return os.environ.get("INPUT_DIR", "documentos")
+
+
+def _msg_ok(msg: str) -> bool:
+    """True si el mensaje de un upsert/add indica éxito (no error de red/HTTP)."""
+    return "sin duplicar" in msg or "aceptado" in msg
+
+
+def _dup_basenames(paths) -> list:
+    """Basenames que aparecen en más de una ruta (la identidad de LightRAG es por basename)."""
+    seen, dup = set(), set()
+    for p in paths:
+        name = pathlib.Path(str(p)).name
+        (dup if name in seen else seen).add(name)
+    return sorted(dup)
+
+
+def _delete_ok(client, name) -> bool:
+    """Borra en LightRAG el doc con ese basename. Ok si no existe (ya borrado) o si el
+    borrado responde 2xx."""
+    try:
+        did = client.find_doc_by_path(name)
+        if not did:
+            return True
+        r = client.delete_document(did)
+        return r.status_code in (200, 201, 202)
+    except httpx.HTTPError:
+        return False
 
 
 mcp = FastMCP("myrmion-graphrag")
@@ -319,9 +348,11 @@ def sincronizar_documento(ruta: str, texto: str = "") -> str:
             return f"'{p.name}' sin cambios (mismo hash); no se reindexa."
         msg = client.upsert_file(ruta)  # multipart: LightRAG parsea el fichero
 
-    doc_ledger.record_one(ledger, ruta, chash,
-                          sha=gitutil.current_sha("."), branch=gitutil.current_branch("."))
-    doc_ledger.save(ledger, ledger_path)
+    # Solo se versiona si LightRAG aceptó el cambio (si no, el ledger no avanza -> reintenta).
+    if _msg_ok(msg):
+        doc_ledger.record_one(ledger, ruta, chash,
+                              sha=gitutil.current_sha("."), branch=gitutil.current_branch("."))
+        doc_ledger.save(ledger, ledger_path)
     return msg
 
 
@@ -356,29 +387,38 @@ def sincronizar_documentos(carpeta: str = "") -> str:
 
     ledger_path = _docs_ledger_path()
     ledger = doc_ledger.load(ledger_path)
-    diffs = doc_ledger.record_batch(ledger, docs, sha=gitutil.current_sha(carpeta),
-                                    branch=gitutil.current_branch(carpeta))
+    diffs = doc_ledger.diff_batch(ledger, docs)  # calcula SIN mutar
 
     client = _default_client()
     aplicados = {"added": 0, "modified": 0, "removed": 0, "errores": 0}
-    for nid, change, _detail in diffs:
+    applied = []
+    for entry in diffs:
+        nid, change, _detail = entry
         name = nid.split(":", 1)[1]
         if change in ("added", "modified"):
             path = by_name.get(name)
-            if not path:
+            if path and _msg_ok(client.upsert_file(path)):
+                applied.append(entry)
+                aplicados[change] += 1
+            else:
                 aplicados["errores"] += 1
-                continue
-            client.upsert_file(path)  # borra la version previa y re-sube (multipart)
-            aplicados[change] += 1
         elif change == "removed":
-            did = client.find_doc_by_path(name)
-            if did:
-                client.delete_document(did)
-            aplicados["removed"] += 1
+            if _delete_ok(client, name):
+                applied.append(entry)
+                aplicados["removed"] += 1
+            else:
+                aplicados["errores"] += 1
 
+    # Versiona SOLO lo que se aplicó con éxito (lo fallido no avanza -> se reintenta).
+    doc_ledger.commit(ledger, docs, applied, sha=gitutil.current_sha(carpeta),
+                      branch=gitutil.current_branch(carpeta))
     doc_ledger.save(ledger, ledger_path)
-    return json.dumps({"ficheros": len(ficheros), "cambios": doc_ledger.summary(diffs),
-                       "aplicados": aplicados}, ensure_ascii=False, indent=2)
+    result = {"ficheros": len(ficheros), "cambios": doc_ledger.summary(applied),
+              "aplicados": aplicados}
+    dups = _dup_basenames(ficheros)
+    if dups:
+        result["aviso"] = f"basenames duplicados (LightRAG deduplica por nombre): {dups}"
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()

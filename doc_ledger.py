@@ -96,20 +96,34 @@ def remove_one(store, path, sha="", branch="") -> list:
     return diffs
 
 
-def record_batch(store, docs: dict, sha="", branch="") -> list:
-    """Diffea TODO el conjunto de documentos (dict {ruta: hash}) contra el estado previo.
-
-    Devuelve la lista de (node_id, cambio, detalle). No toca LightRAG: el llamador aplica los
-    cambios (upsert/delete) sobre el motor RAG.
-    """
+def diff_batch(store, docs: dict) -> list:
+    """Calcula los cambios (added/modified/removed) del conjunto {ruta: hash} contra el
+    estado previo, SIN mutar el store. El llamador aplica a LightRAG y luego commitea SOLO
+    lo aplicado con éxito (evita que el ledger se adelante a LightRAG)."""
     old = store.all_nodes()
     new = [_doc_node(p, h) for p, h in docs.items()]
-    diffs = history.diff_nodes(old, new)
-    store.clear()  # conserva snapshots/anotaciones
-    for n in new:
-        store.upsert_node(n)
-    _snapshot(store, diffs, sha, branch)
-    return diffs
+    return history.diff_nodes(old, new)
+
+
+def commit(store, docs: dict, applied: list, sha="", branch="") -> list:
+    """Persiste en el ledger SOLO los cambios `applied` (ya aplicados a LightRAG) y crea un
+    snapshot. Lo no aplicado no avanza -> se reintenta en la próxima sincronización."""
+    name_hash = {_name(p): h for p, h in docs.items()}
+    for nid, change, _detail in applied:
+        name = nid.split(":", 1)[1]
+        if change in ("added", "modified"):
+            store.upsert_node(_doc_node(name, name_hash.get(name, "")))
+        elif change == "removed":
+            store.delete_by_file(name)
+    _snapshot(store, applied, sha, branch)
+    return applied
+
+
+def record_batch(store, docs: dict, sha="", branch="") -> list:
+    """Conveniencia: diffea y COMMITEA todos los cambios de golpe (sin garantía de que se
+    aplicaron a un sistema externo). Para versionado seguro usa diff_batch + aplicar + commit."""
+    diffs = diff_batch(store, docs)
+    return commit(store, docs, diffs, sha, branch)
 
 
 def history_of(store, path) -> list:

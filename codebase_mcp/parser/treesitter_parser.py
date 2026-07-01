@@ -136,13 +136,12 @@ class TreeSitterParser:
         field = self.cfg.get("call_field")
         target = call_node.child_by_field_name(field) if field else None
         if target is None:
-            # sin campo (p.ej. VB 'invocation'): el callee es el primer hijo que no es
-            # la lista de argumentos ni un paréntesis.
+            # sin campo (p.ej. VB 'invocation'): el callee es el primer hijo que sea un
+            # identificador o un acceso a miembro (ignora modifiers, ERROR, paréntesis...).
             for c in call_node.children:
-                if c.type in ("argument_list", "arguments", "(", ")"):
-                    continue
-                target = c
-                break
+                if c.type.endswith("identifier") or "member" in c.type or "access" in c.type:
+                    target = c
+                    break
         if target is None:
             return None, ""
         if target.type.endswith("identifier"):
