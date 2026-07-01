@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "myrmion-graphrag"
-version = "0.2.0"
+version = "0.3.0"
 description = "myrmion-graphRAG: GraphRAG 100% local (LightRAG + Ollama) + servidor MCP de codebase, expuestos a Claude Code"
 requires-python = ">=3.10"
 readme = "README.md"
