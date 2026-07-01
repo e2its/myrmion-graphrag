@@ -144,6 +144,38 @@ def watch_indexado(client, base, headers):
               flush=True)
 
 
+def _sync_batch(base, api_key, ficheros, ledger_path):
+    """Sincronización VERSIONADA: sube solo added/modified (borrando la version previa en
+    LightRAG) y borra lo eliminado. Detecta cambios por hash de bytes (ledger), así que
+    re-ejecutar NO deja que LightRAG archive el update como duplicado."""
+    import doc_ledger
+    from mcp_server import LightRAGClient
+
+    client = LightRAGClient(base_url=base, api_key=api_key)
+    ledger = doc_ledger.load(ledger_path)
+    by_name = {p.name: str(p) for p in ficheros}
+    docs = {str(p): doc_ledger.file_hash(p) for p in ficheros}
+    diffs = doc_ledger.record_batch(ledger, docs)
+    stats = {"nuevos": 0, "modificados": 0, "borrados": 0, "sin_cambios": len(ficheros)}
+    for nid, change, _detail in diffs:
+        name = nid.split(":", 1)[1]
+        if change in ("added", "modified"):
+            print("  " + client.upsert_file(by_name[name]), flush=True)
+            stats["nuevos" if change == "added" else "modificados"] += 1
+            stats["sin_cambios"] -= 1
+        elif change == "removed":
+            did = client.find_doc_by_path(name)
+            if did:
+                client.delete_document(did)
+            print(f"  Borrado en LightRAG (ya no existe): {name}", flush=True)
+            stats["borrados"] += 1
+    doc_ledger.save(ledger, ledger_path)
+    print("-" * 72)
+    print(f"Sync: {stats['nuevos']} nuevos, {stats['modificados']} modificados, "
+          f"{stats['borrados']} borrados, {stats['sin_cambios']} sin cambios.")
+    return stats
+
+
 def main():
     ap = argparse.ArgumentParser(description="Sube una carpeta de documentos a LightRAG.")
     ap.add_argument("carpeta", help="Carpeta con los documentos a indexar")
@@ -153,6 +185,11 @@ def main():
                     help="monitoriza el indexado en vivo hasta que termine")
     ap.add_argument("--no-exclude", action="store_true",
                     help="no omitir node_modules/.git/build/etc. (sube TODO)")
+    ap.add_argument("--sync", action="store_true",
+                    help="modo VERSIONADO: salta lo no cambiado y ACTUALIZA (borra+sube) lo "
+                         "modificado por hash, con un ledger (no pierde updates ni duplica)")
+    ap.add_argument("--ledger", default=os.environ.get("DOCS_LEDGER", "config/docs.json"),
+                    help="ruta del ledger de versionado (para --sync)")
     args = ap.parse_args()
 
     base = args.url.rstrip("/")
@@ -166,6 +203,15 @@ def main():
     total = len(ficheros)
     if not total:
         sys.exit("No encontre documentos con extensiones soportadas.")
+
+    if args.sync:
+        print(f"Sincronizando {total} ficheros con {base} (versionado por hash)")
+        print("-" * 72)
+        _sync_batch(base, args.api_key, ficheros, args.ledger)
+        if args.watch:
+            with httpx.Client(timeout=300) as client:
+                watch_indexado(client, base, headers)
+        return
 
     tam_total = sum(p.stat().st_size for p in ficheros)
     if omitidos:

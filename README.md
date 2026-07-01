@@ -61,6 +61,7 @@ envía a Anthropic al razonar tu pregunta.
 - [Lenguajes y parsers cubiertos](#lenguajes-y-parsers-cubiertos)
 - [Mantenimiento automático del codebase_inventory](#mantenimiento-automático-del-codebase_inventory)
 - [Sincronización incremental sin duplicados](#sincronización-incremental-sin-duplicados)
+- [Versionado de documentos](#versionado-de-documentos)
 - [Tests](#tests)
 - [Estructura del repo](#estructura-del-repo)
 - [Referencias / créditos](#referencias--créditos)
@@ -269,7 +270,10 @@ máxima.
 |-------------|----------|
 | `buscar_conocimiento(consulta, modo="mix", solo_contexto=True, top_k=40)` | Recupera contexto del grafo para que **tú** razones |
 | `anadir_documento(texto, descripcion="")` | Indexa un texto al vuelo (asíncrono) |
-| `sincronizar_documento(ruta, texto="")` | Actualiza un documento tras editarlo **sin duplicar** (delete + insert) |
+| `sincronizar_documento(ruta, texto="")` | Actualiza un documento tras editarlo **sin duplicar** y **versionado** (skip si el hash no cambió; delete + insert/upload si cambió) |
+| `sincronizar_documentos(carpeta="")` | Sincroniza una carpeta entera: added/modified/removed por **hash**, crea un snapshot |
+| `historico_documento(ruta)` | Evolución versionada del documento (added/modified/removed por commit) |
+| `estado_documentos()` | Nº de documentos rastreados y último snapshot |
 | `estado_rag()` | Salud de LightRAG + backend de storage activo |
 | `verificar_alineacion()` / `reconciliar(aplicar=False)` | Consistencia Neo4j⇄Postgres (perfil híbrido) |
 
@@ -280,7 +284,7 @@ Modos de búsqueda: `mix` (recomendado), `hybrid`, `local`, `global`, `naive`.
 | Herramienta | Qué hace |
 |-------------|----------|
 | `indexar_codebase(ruta="", incremental=False)` | Indexa/reindexa el codebase |
-| `sincronizar_codigo(rutas, durable=False)` | Sync incremental idempotente tras editar |
+| `sincronizar_codigo(rutas)` | Sync incremental idempotente tras editar |
 | `dependencias_de(simbolo, profundidad=1)` | De qué depende (callees) |
 | `quien_llama_a(simbolo, profundidad=1)` | Quién lo llama (callers) |
 | `a_que_afecta(simbolo, profundidad=5)` | **Blast radius**: qué se afecta si lo cambias |
@@ -347,8 +351,28 @@ tras editar, garantizando:
   fichero queda colgando.
 - **Barato**: no-op si el hash del fichero no cambió.
 
-Para documentos, `sincronizar_documento(ruta)` hace delete+insert contra LightRAG (que
-deduplica por nombre de fichero y archivaría un duplicado en vez de actualizar).
+---
+
+## Versionado de documentos
+
+LightRAG guarda solo la versión **actual** de cada documento y deduplica por **nombre**
+(archiva los duplicados en vez de actualizar): si el contenido cambia pero el nombre no, un
+re-upload ingenuo **pierde el update**. Por encima de LightRAG hay un **ledger de documentos**
+que reutiliza la misma maquinaria que el inventario de código (snapshots + histórico), con la
+identidad = basename y el `body_hash` = **hash de contenido/bytes**:
+
+- **Detección por hash, no por nombre**: `sincronizar_documento(ruta)` / `sincronizar_documentos(carpeta)`
+  reindexan **solo** si el hash cambió (no-op si no), y hacen **delete + insert/upload** cuando
+  cambió → nunca se pierde un update ni se duplica. Funciona con binarios (pdf/docx: se re-sube
+  el fichero por multipart).
+- **Histórico**: cada sync crea un **snapshot** (etiquetado con el commit git) y registra
+  added/modified/removed → `historico_documento(ruta)` y `estado_documentos()`, igual que el
+  codebase.
+- **Batch seguro**: `python ingest.py "$INPUT_DIR" --sync` usa el ledger para saltar lo no
+  cambiado y **actualizar** (borrar+subir) lo modificado, en vez de dejar que LightRAG archive
+  el duplicado.
+
+El ledger vive en `config/docs.json` (var `DOCS_LEDGER`), gitignored.
 
 ---
 

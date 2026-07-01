@@ -54,6 +54,30 @@ def test_status_counts_y_pipeline_busy():
 
 
 @respx.mock
+def test_sync_batch_hash_aware(tmp_path):
+    base = "http://test"
+    carpeta = tmp_path / "docs"
+    carpeta.mkdir()
+    a = carpeta / "a.md"
+    a.write_text("uno")
+    b = carpeta / "b.txt"
+    b.write_text("dos")
+    respx.get(f"{base}/documents").mock(return_value=httpx.Response(200, json={"statuses": {}}))
+    up = respx.post(f"{base}/documents/upload").mock(return_value=httpx.Response(200, json={}))
+    ledger = str(tmp_path / "docs.json")
+
+    st1 = ingest._sync_batch(base, "", [a, b], ledger)
+    assert st1["nuevos"] == 2 and up.call_count == 2
+
+    st2 = ingest._sync_batch(base, "", [a, b], ledger)   # sin cambios -> no sube
+    assert st2["sin_cambios"] == 2 and st2["nuevos"] == 0
+
+    a.write_text("uno-modificado")                       # cambia a.md -> se actualiza
+    st3 = ingest._sync_batch(base, "", [a, b], ledger)
+    assert st3["modificados"] == 1 and st3["sin_cambios"] == 1
+
+
+@respx.mock
 def test_get_json_traga_errores():
     base = "http://test"
     respx.get(f"{base}/documents").mock(return_value=httpx.Response(500, text="boom"))

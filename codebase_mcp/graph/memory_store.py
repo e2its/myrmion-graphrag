@@ -141,6 +141,8 @@ class InMemoryGraphStore(GraphStore):
             "edges": [e.__dict__ for e in self._edges.values()],
             "annotations": self._annotations,
             "file_hashes": self._file_hashes,
+            "snapshots": [s.__dict__ for s in self._snapshots],
+            "changes": [c.__dict__ for c in self._changes],
         }
         pathlib.Path(path).write_text(json.dumps(data), encoding="utf-8")
 
@@ -155,3 +157,6 @@ class InMemoryGraphStore(GraphStore):
             self.upsert_edge(Edge(**ed))
         self._annotations = {k: dict(v) for k, v in data.get("annotations", {}).items()}
         self._file_hashes = dict(data.get("file_hashes", {}))
+        # snapshots y changes tambien se persisten -> el historico sobrevive a reload.
+        self._snapshots = [Snapshot(**s) for s in data.get("snapshots", [])]
+        self._changes = [ChangeRecord(**c) for c in data.get("changes", [])]

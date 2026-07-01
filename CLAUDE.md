@@ -20,8 +20,11 @@ lugar de suponer:
 - `buscar_conocimiento(consulta, modo="mix", solo_contexto=True, top_k=40)` — recupera el
   contexto crudo (entidades, relaciones, fragmentos) para que **tú** razones. Primera opción.
 - `anadir_documento(texto, descripcion="")` — indexa un texto al vuelo (asíncrono).
-- `sincronizar_documento(ruta, texto="")` — actualiza un documento tras editarlo **sin
-  duplicar** (delete + insert). Úsalo tras editar un fichero de documentación indexado.
+- `sincronizar_documento(ruta, texto="")` — tras editar un documento indexado: reindexa **sin
+  duplicar** y **versionado** (no-op si el hash no cambió; delete+insert/upload si cambió).
+- `sincronizar_documentos(carpeta="")` — sincroniza una carpeta entera por hash (added/
+  modified/removed) y crea snapshot.
+- `historico_documento(ruta)` / `estado_documentos()` — histórico y estado del versionado.
 - `estado_rag()` — salud de LightRAG + backend de storage activo. Llámalo primero si algo falla.
 - `verificar_alineacion()` / `reconciliar(aplicar=False)` — solo perfil híbrido: comprueba y
   repara la alineación Neo4j⇄Postgres.

@@ -18,6 +18,7 @@ Variables de entorno (todas opcionales menos donde se indique):
 """
 
 import hashlib
+import json
 import os
 import pathlib
 
@@ -168,6 +169,33 @@ class LightRAGClient:
     def delete_document(self, doc_id) -> httpx.Response:
         return self._post("/documents/delete_document", {"doc_ids": [doc_id]})
 
+    def upload_file(self, path) -> httpx.Response:
+        """Sube un fichero por multipart (/documents/upload); LightRAG lo parsea (pdf/docx/...)."""
+        p = pathlib.Path(path)
+        headers = {"X-API-Key": self.api_key} if self.api_key else {}
+        with open(p, "rb") as fh, httpx.Client(timeout=self.timeout) as client:
+            return client.post(
+                f"{self.base_url}/documents/upload",
+                files={"file": (p.name, fh)}, headers=headers,
+            )
+
+    def upsert_file(self, path) -> str:
+        """Actualiza un fichero (binario o texto) SIN duplicar: borra la version previa por su
+        basename y re-sube el fichero por multipart."""
+        try:
+            doc_id = self.find_doc_by_path(path)
+            if doc_id:
+                self.delete_document(doc_id)
+            r = self.upload_file(path)
+        except httpx.ConnectError:
+            return f"No pude conectar con LightRAG en {self.base_url}."
+        except httpx.TimeoutException:
+            return "La subida del documento supero el timeout; reintentalo."
+        if r.status_code not in (200, 201, 202):
+            return f"LightRAG devolvio HTTP {r.status_code}: {r.text[:300]}"
+        accion = "reemplazado" if doc_id else "subido"
+        return f"Documento {accion} sin duplicar ({pathlib.Path(path).name})."
+
     def upsert_document(self, ruta, texto) -> str:
         """Actualiza un documento SIN duplicar: borra la versión previa (si existe)
         por su ruta y reinserta el texto con file_source=ruta.
@@ -199,6 +227,15 @@ def _default_client() -> LightRAGClient:
         default_mode=os.environ.get("LIGHTRAG_MODE", "mix"),
         timeout=float(os.environ.get("LIGHTRAG_TIMEOUT", "120")),
     )
+
+
+def _docs_ledger_path() -> str:
+    """Ruta del ledger de versionado de documentos (JSON local, gitignored en config/)."""
+    return os.environ.get("DOCS_LEDGER", "config/docs.json")
+
+
+def _input_dir() -> str:
+    return os.environ.get("INPUT_DIR", "documentos")
 
 
 mcp = FastMCP("myrmion-graphrag")
@@ -250,23 +287,126 @@ def anadir_documento(texto: str, descripcion: str = "") -> str:
 
 @mcp.tool()
 def sincronizar_documento(ruta: str, texto: str = "") -> str:
-    """Actualiza en el grafo un documento tras editarlo, SIN generar duplicados.
+    """Actualiza un documento tras editarlo, SIN duplicar y VERSIONANDO el cambio.
 
-    Localiza la version anterior por su ruta, la borra y reinserta el contenido
-    nuevo (delete + insert), que es la unica via de "update" soportada por
-    LightRAG (deduplica por nombre de fichero y archiva los duplicados).
+    Compara el HASH de contenido con el registrado en el ledger: si no cambió, NO reindexa
+    (no-op barato); si cambió, borra la version anterior en LightRAG y reinserta la nueva
+    (delete + insert, la unica via de "update" soportada, ya que LightRAG deduplica por
+    nombre y archiva los duplicados). Registra el cambio en el histórico.
 
     Args:
-        ruta: Ruta del fichero (se usa como file_source / clave de deduplicacion).
+        ruta: Ruta del fichero (su basename es la clave de deduplicacion/versionado).
         texto: Contenido nuevo. Si se omite, se lee del fichero en `ruta`.
     """
-    contenido = texto
-    if not contenido:
+    import doc_ledger
+    from codebase_mcp import gitutil
+
+    client = _default_client()
+    ledger_path = _docs_ledger_path()
+    ledger = doc_ledger.load(ledger_path)
+
+    if texto:
+        chash = doc_ledger.content_hash(texto)
+        if doc_ledger.doc_hash(ledger, ruta) == chash:
+            return f"'{pathlib.Path(ruta).name}' sin cambios (mismo hash); no se reindexa."
+        msg = client.upsert_document(ruta, texto)
+    else:
+        p = pathlib.Path(ruta)
+        if not p.exists():
+            return f"No existe el fichero {ruta}."
+        chash = doc_ledger.file_hash(ruta)  # por bytes: sirve para binarios (pdf/docx)
+        if doc_ledger.doc_hash(ledger, ruta) == chash:
+            return f"'{p.name}' sin cambios (mismo hash); no se reindexa."
+        msg = client.upsert_file(ruta)  # multipart: LightRAG parsea el fichero
+
+    doc_ledger.record_one(ledger, ruta, chash,
+                          sha=gitutil.current_sha("."), branch=gitutil.current_branch("."))
+    doc_ledger.save(ledger, ledger_path)
+    return msg
+
+
+@mcp.tool()
+def sincronizar_documentos(carpeta: str = "") -> str:
+    """Sincroniza TODA una carpeta de documentos con LightRAG y versiona los cambios.
+
+    Detecta added/modified/removed por HASH de contenido (no por nombre): solo reindexa lo
+    que cambió (sin duplicar), borra en LightRAG lo que ya no existe, y crea un snapshot del
+    estado (etiquetado con el commit git si lo hay).
+
+    Args:
+        carpeta: Carpeta a sincronizar. Si se omite, usa INPUT_DIR.
+    """
+    import doc_ledger
+    import ingest
+    from codebase_mcp import gitutil
+
+    carpeta = carpeta or _input_dir()
+    try:
+        ficheros, _ = ingest.descubrir_ficheros(carpeta, excluir=True)
+    except Exception as e:  # noqa: BLE001
+        return f"No pude explorar {carpeta}: {type(e).__name__}: {e}"
+
+    by_name, docs = {}, {}
+    for p in ficheros:
         try:
-            contenido = pathlib.Path(ruta).read_text(encoding="utf-8", errors="replace")
-        except OSError as e:
-            return f"No pude leer {ruta}: {type(e).__name__}."
-    return _default_client().upsert_document(ruta, contenido)
+            docs[str(p)] = doc_ledger.file_hash(p)  # por bytes (sirve para binarios)
+        except OSError:
+            continue
+        by_name[pathlib.Path(p).name] = str(p)
+
+    ledger_path = _docs_ledger_path()
+    ledger = doc_ledger.load(ledger_path)
+    diffs = doc_ledger.record_batch(ledger, docs, sha=gitutil.current_sha(carpeta),
+                                    branch=gitutil.current_branch(carpeta))
+
+    client = _default_client()
+    aplicados = {"added": 0, "modified": 0, "removed": 0, "errores": 0}
+    for nid, change, _detail in diffs:
+        name = nid.split(":", 1)[1]
+        if change in ("added", "modified"):
+            path = by_name.get(name)
+            if not path:
+                aplicados["errores"] += 1
+                continue
+            client.upsert_file(path)  # borra la version previa y re-sube (multipart)
+            aplicados[change] += 1
+        elif change == "removed":
+            did = client.find_doc_by_path(name)
+            if did:
+                client.delete_document(did)
+            aplicados["removed"] += 1
+
+    doc_ledger.save(ledger, ledger_path)
+    return json.dumps({"ficheros": len(ficheros), "cambios": doc_ledger.summary(diffs),
+                       "aplicados": aplicados}, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def historico_documento(ruta: str) -> str:
+    """Evolución versionada de un documento (added/modified/removed por snapshot/commit).
+
+    Args:
+        ruta: Ruta o nombre del documento.
+    """
+    import doc_ledger
+
+    ledger = doc_ledger.load(_docs_ledger_path())
+    recs = doc_ledger.history_of(ledger, ruta)
+    return json.dumps([{"snapshot": r.snapshot_id, "cambio": r.change, "detalle": r.detail}
+                       for r in recs], ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def estado_documentos() -> str:
+    """Estado del versionado de documentos: nº de documentos rastreados y último snapshot."""
+    import doc_ledger
+
+    ledger = doc_ledger.load(_docs_ledger_path())
+    snap = ledger.latest_snapshot()
+    docs = [n.qualified_name for n in ledger.all_nodes() if n.kind == "Document"]
+    return json.dumps({"documentos": len(docs),
+                       "ultimo_snapshot": snap.__dict__ if snap else None},
+                      ensure_ascii=False, indent=2)
 
 
 @mcp.tool()

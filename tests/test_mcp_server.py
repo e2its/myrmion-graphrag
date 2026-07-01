@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 import respx
@@ -129,8 +131,10 @@ def test_sincronizar_documento_insert_when_absent():
 def test_tool_wrappers(monkeypatch, tmp_path):
     monkeypatch.setenv("LIGHTRAG_BASE_URL", BASE)
     monkeypatch.setenv("LIGHTRAG_API_KEY", "")
+    monkeypatch.setenv("DOCS_LEDGER", str(tmp_path / "docs.json"))
     respx.post(f"{BASE}/query").mock(return_value=httpx.Response(200, json={"response": "R"}))
     respx.post(f"{BASE}/documents/text").mock(return_value=httpx.Response(200, json={}))
+    respx.post(f"{BASE}/documents/upload").mock(return_value=httpx.Response(200, json={}))
     respx.get(f"{BASE}/health").mock(return_value=httpx.Response(200, json={"status": "ok"}))
     respx.get(f"{BASE}/documents").mock(return_value=httpx.Response(200, json={"statuses": {}}))
     assert mcp_server.buscar_conocimiento("q") == "R"
@@ -139,6 +143,46 @@ def test_tool_wrappers(monkeypatch, tmp_path):
     f = tmp_path / "n.md"
     f.write_text("contenido")
     assert "sin duplicar" in mcp_server.sincronizar_documento(str(f))
+
+
+@respx.mock
+def test_versionado_documento_texto(monkeypatch, tmp_path):
+    monkeypatch.setenv("LIGHTRAG_BASE_URL", BASE)
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "")
+    monkeypatch.setenv("DOCS_LEDGER", str(tmp_path / "docs.json"))
+    respx.get(f"{BASE}/documents").mock(return_value=httpx.Response(200, json={"statuses": {}}))
+    respx.post(f"{BASE}/documents/text").mock(return_value=httpx.Response(200, json={}))
+
+    out1 = mcp_server.sincronizar_documento("nota.md", "contenido v1")
+    assert "sin duplicar" in out1
+    # mismo contenido -> no reindexa (hash igual)
+    assert "sin cambios" in mcp_server.sincronizar_documento("nota.md", "contenido v1")
+    # cambia -> reindexa
+    assert "sin cambios" not in mcp_server.sincronizar_documento("nota.md", "contenido v2")
+
+    hist = json.loads(mcp_server.historico_documento("nota.md"))
+    assert any(h["cambio"] == "modified" for h in hist)
+    est = json.loads(mcp_server.estado_documentos())
+    assert est["documentos"] == 1
+
+
+@respx.mock
+def test_versionado_documentos_batch(monkeypatch, tmp_path):
+    monkeypatch.setenv("LIGHTRAG_BASE_URL", BASE)
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "")
+    monkeypatch.setenv("DOCS_LEDGER", str(tmp_path / "docs.json"))
+    carpeta = tmp_path / "docs"
+    carpeta.mkdir()
+    (carpeta / "a.md").write_text("uno")
+    (carpeta / "b.txt").write_text("dos")
+    respx.get(f"{BASE}/documents").mock(return_value=httpx.Response(200, json={"statuses": {}}))
+    up = respx.post(f"{BASE}/documents/upload").mock(return_value=httpx.Response(200, json={}))
+
+    out = json.loads(mcp_server.sincronizar_documentos(str(carpeta)))
+    assert out["cambios"]["added"] == 2 and up.call_count == 2
+    # re-ejecutar sin cambios -> nada que subir
+    out2 = json.loads(mcp_server.sincronizar_documentos(str(carpeta)))
+    assert out2["cambios"] == {"added": 0, "modified": 0, "removed": 0}
 
 
 def test_content_md5_stable():
