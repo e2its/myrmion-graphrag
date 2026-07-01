@@ -35,7 +35,8 @@ Dos memorias locales, expuestas como dos servidores MCP:
   papers, decisiones). Motor: LightRAG + Ollama.
 - **`myrmion-codebase`** — grafo de *tu código*: dependencias, "¿a qué afecta esta función?",
   "¿quién llama a X?", inventario (reutilizable / obligatoria / muerta) e histórico. Parser
-  multi-lenguaje propio (Python, JS/TS, Java, C#, VB6/VBScript, VB.NET, ASP clásico).
+  multi-lenguaje (Python vía `ast`; JS/TS, Java, C# y VB.NET vía tree-sitter; VB6/VBScript y
+  ASP clásico con parser propio).
 
 Todo corre en tu equipo, sin claves de API para el indexado. Solo sale lo que Claude Code
 envía a Anthropic al razonar tu pregunta.
@@ -318,9 +319,11 @@ CALLS/IMPLEMENTS`); solo cambia el motor de parseo:
 | **VB5/6 · VBScript** | `.bas .cls .frm .vbs` | propio (line-oriented) | `Sub`/`Function`/`Property Get\|Let\|Set`/`Class`, `Implements`, `Call` (sin gramática tree-sitter fiable) |
 | **ASP clásico** | `.asp` | preprocesador → VBScript | extrae bloques `<% %>` y directivas `<!--#include-->` (→ `IMPORTS`) |
 
-> La resolución de llamadas de VB6/VBScript/VB.NET es heurística (no compila VB); expone
-> `confidence` para que valores la fiabilidad. Nuevos lenguajes tree-sitter se añaden con
-> registrar su gramática y extensión. El markup `.aspx` de ASP.NET queda para una fase posterior.
+> La resolución de llamadas es **heurística** en todos los lenguajes (tree-sitter es
+> sintáctico; no hay análisis de tipos): se expone `confidence` (`exact`/`heuristic`/
+> `unresolved`) para que valores la fiabilidad. En VB.NET la herencia (`Inherits`/`Implements`)
+> se omite por ser poco fiable en la gramática. Nuevos lenguajes tree-sitter se añaden
+> registrando su gramática y extensión. El markup `.aspx` de ASP.NET queda para fase posterior.
 
 ---
 
@@ -422,7 +425,7 @@ Este proyecto toma como base y se inspira en:
 
 - [HKUDS/LightRAG](https://github.com/HKUDS/LightRAG) — motor GraphRAG (grafo + vectores + storage pluggable).
 - [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — concepto del servidor de inteligencia de codebase.
-- [tree-sitter](https://tree-sitter.github.io/) y las gramáticas `tree-sitter-python/javascript/typescript/java/c-sharp` — parsing multi-lenguaje.
+- [tree-sitter](https://tree-sitter.github.io/) + gramáticas `tree-sitter-javascript/typescript/java/c-sharp` y [tree-sitter-language-pack](https://github.com/kreuzberg-dev/tree-sitter-language-pack) (grammar `vb` para VB.NET) — parsing multi-lenguaje.
 - [Ollama](https://ollama.com) y [Qwen](https://github.com/QwenLM) — modelos locales (LLM y embeddings).
 - [Model Context Protocol](https://modelcontextprotocol.io) — el estándar que conecta las herramientas con Claude Code.
 - [Neo4j](https://neo4j.com) y [PostgreSQL](https://www.postgresql.org) (pgvector + [Apache AGE](https://age.apache.org)) — backends profesionales.
