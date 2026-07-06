@@ -4,7 +4,7 @@
 
 <h1 align="center">Myrmion graphRAG</h1>
 
-<p align="center"><i>Memoria 100% local para Claude Code — GraphRAG de tus documentos y grafo de tu código, vía MCP. Sin nube, sin claves de API.</i></p>
+<p align="center"><i>Memoria 100% local para Claude Code — GraphRAG de tus documentos y grafo de tu código, vía MCP. Sin nube, sin claves de API de modelos comerciales.</i></p>
 
 <p align="center">
   <a href="#licencia"><img src="https://img.shields.io/badge/license-MIT-1D9E75" alt="MIT license"></a>
@@ -38,8 +38,9 @@ Dos memorias locales, expuestas como dos servidores MCP:
   multi-lenguaje (Python vía `ast`; JS/TS, Java, C# y VB.NET vía tree-sitter; VB6/VBScript y
   ASP clásico con parser propio).
 
-Todo corre en tu equipo, sin claves de API para el indexado. Solo sale lo que Claude Code
-envía a Anthropic al razonar tu pregunta.
+Todo corre en tu equipo: el indexado (LLM + embeddings vía Ollama) no requiere ninguna clave
+de API de modelos comerciales (OpenAI, Anthropic, etc.). La única salida a Internet es la que
+Claude Code hace a Anthropic al razonar tu pregunta — no la provoca esta herramienta.
 
 > Otras piezas del ecosistema: [myrmion-blackbar-pii-guard](https://github.com/e2its/myrmion-blackbar-pii-guard)
 > (redacción de PII para Claude) · [myrmion-AI-factory](https://github.com/e2its/myrmion-AI-factory)

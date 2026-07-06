@@ -42,6 +42,16 @@ done
 echo "==> Leyendo config para inyectar puerto/API key/rutas"
 getcfg() { grep -E "^$1=" "$2" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | xargs || true; }
 API_KEY="$(getcfg LIGHTRAG_API_KEY "$ENV_FILE")"
+if [ -z "$API_KEY" ]; then
+  # Auth ON por defecto: si no hay clave, generamos una aleatoria y la persistimos.
+  API_KEY="$(openssl rand -hex 32 2>/dev/null || head -c32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  if grep -qE '^LIGHTRAG_API_KEY=' "$ENV_FILE"; then
+    sed -i "s|^LIGHTRAG_API_KEY=.*|LIGHTRAG_API_KEY=$API_KEY|" "$ENV_FILE"
+  else
+    printf '\nLIGHTRAG_API_KEY=%s\n' "$API_KEY" >> "$ENV_FILE"
+  fi
+  echo "    Generada LIGHTRAG_API_KEY aleatoria en config/lightrag.env (auth ON por defecto)."
+fi
 PORT="$(getcfg PORT "$ENV_FILE")"; PORT="${PORT:-9621}"
 GRAPH_STORAGE="$(getcfg LIGHTRAG_GRAPH_STORAGE "$ENV_FILE")"
 CB_ROOT="$(getcfg CODEBASE_ROOT "$CB_ENV_FILE")"; CB_ROOT="${CB_ROOT:-$REPO_DIR}"
