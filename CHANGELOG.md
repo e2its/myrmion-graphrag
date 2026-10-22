@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/e2its/myrmion-graphrag/compare/myrmion-graphrag-v0.3.0...myrmion-graphrag-v0.3.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **security:** release the hardened LightRAG REST defaults ([#51](https://github.com/e2its/myrmion-graphrag/issues/51)) ([317e5f0](https://github.com/e2its/myrmion-graphrag/commit/317e5f0fe139cc4b8a341bd198d209f6b7eeda64))
+
 ## [0.3.0](https://github.com/e2its/myrmion-graphrag/compare/myrmion-graphrag-v0.2.0...myrmion-graphrag-v0.3.0) (2026-07-01)
 
 
